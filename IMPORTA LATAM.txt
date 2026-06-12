@@ -1,0 +1,1090 @@
+# -*- coding: utf-8 -*-
+"""
+IMPORTA PDF DE ESCALA LATAM -> CSV (layout padrão do pipeline)
+
+Baseado em: IMPORTA ESCALA PDF SIMPL AZUL 19082025 PASSO 1.py
+
+Saída:
+  <nome_do_pdf>_PRIMEIRA_VERSAO_<data>.csv
+
+Pasta de saída:
+  - Se AERO_OUTPUT_DIR estiver definido, usa essa pasta
+  - Caso contrário, troca "Escalas_Executadas" por "Auditoria_Calculos"
+
+Requisitos: Java (tabula), tabula-py, pandas, tqdm, tkinter
+"""
+
+import os
+import re
+import unicodedata
+import warnings
+import subprocess
+from datetime import datetime, timedelta
+from io import StringIO
+
+import pandas as pd
+import tabula
+from tqdm import tqdm
+
+import tkinter as tk
+from tkinter import messagebox, filedialog
+
+try:
+    from openpyxl import Workbook
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
+
+MODO_AUTOMATICO = bool(os.environ.get("AERO_ESCALA_PDF")) or os.environ.get("AERO_NO_POPUP") == "1"
+if MODO_AUTOMATICO:
+    try:
+        messagebox.showinfo = lambda *args, **kwargs: None
+        messagebox.showwarning = lambda *args, **kwargs: None
+        messagebox.showerror = lambda *args, **kwargs: None
+    except Exception:
+        pass
+
+warnings.filterwarnings("ignore")
+
+CSV_COLUMNS = ["Activity", "Checkin", "Start", "Dep", "Arr", "End", "Checkout", "AcVer", "DD", "CAT", "Crew"]
+
+
+def verificar_java():
+    """Verifica se Java está instalado e configurado corretamente."""
+    java_paths = [
+        r"C:\Program Files\Java\jdk-21",
+        r"C:\Program Files\Java\jdk-17",
+        r"C:\Program Files\Java\jdk-11",
+        r"C:\Program Files\Java\jre-1.8",
+        r"C:\Program Files (x86)\Java\jdk-21",
+        r"C:\Program Files (x86)\Java\jre-1.8",
+    ]
+
+    for java_path in java_paths:
+        if os.path.exists(java_path):
+            os.environ["JAVA_HOME"] = java_path
+            os.environ["PATH"] = os.path.join(java_path, "bin") + ";" + os.environ.get("PATH", "")
+            break
+
+    try:
+        result = subprocess.run(["java", "-version"], capture_output=True, text=True, shell=True)
+        if result.returncode == 0:
+            print("\n✅ Java detectado e configurado com sucesso!")
+            version_output = result.stderr if result.stderr else result.stdout
+            if version_output:
+                print(f"   {version_output.splitlines()[0]}")
+            return True
+    except Exception:
+        pass
+
+    print("\n" + "=" * 70)
+    print("❌ ERRO: Java não encontrado ou não configurado!")
+    print("=" * 70)
+    print("\n📋 INSTRUÇÕES PARA INSTALAR O JAVA:")
+    print("1. Acesse: https://www.java.com/pt-BR/download/")
+    print("2. Instale e reinicie o terminal/VS Code")
+    print("3. Execute este script novamente")
+    print("\n💡 Alternativa: https://adoptium.net/temurin/releases/")
+    print("=" * 70)
+    return False
+
+
+if not verificar_java():
+    input("\nPressione ENTER para sair...")
+    raise SystemExit(1)
+
+
+diretorio_entrada = ""
+arquivo_entrada = ""
+
+
+def selecionar_diretorio_arquivo():
+    """Abre diálogo para escolher um PDF; retorna (diretório, arquivo)."""
+    global diretorio_entrada, arquivo_entrada
+
+    pdf_env = os.environ.get("AERO_ESCALA_PDF", "").strip().strip('"')
+    if pdf_env and os.path.isfile(pdf_env) and pdf_env.lower().endswith(".pdf"):
+        diretorio_entrada = os.path.dirname(pdf_env)
+        arquivo_entrada = os.path.basename(pdf_env)
+        print(f"📂 Diretório selecionado (ENV): {diretorio_entrada}")
+        print(f"📄 Arquivo selecionado (ENV): {arquivo_entrada}")
+        return diretorio_entrada, arquivo_entrada
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        messagebox.showinfo("Seleção de Arquivo", "Selecione o PDF da Escala LATAM.")
+        caminho_completo = filedialog.askopenfilename(
+            title="Selecione o PDF",
+            filetypes=[("Arquivos PDF", "*.pdf"), ("Todos os arquivos", "*.*")],
+        )
+        if not caminho_completo:
+            print("Nenhum arquivo foi selecionado.")
+            return None, None
+        diretorio_entrada = os.path.dirname(caminho_completo)
+        arquivo_entrada = os.path.basename(caminho_completo)
+        print(f"📂 Diretório selecionado: {diretorio_entrada}")
+        print(f"📄 Arquivo selecionado: {arquivo_entrada}")
+        return diretorio_entrada, arquivo_entrada
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def nome_csv_saida_para(pdf_path: str) -> str:
+    data_proc = datetime.now().strftime("%d%m%Y_%H%M%S")
+    dir_pdf = os.path.dirname(pdf_path)
+    base_pdf = os.path.splitext(os.path.basename(pdf_path))[0]
+
+    dir_env = os.environ.get("AERO_OUTPUT_DIR", "").strip().strip('"')
+    if dir_env:
+        os.makedirs(dir_env, exist_ok=True)
+        return os.path.join(dir_env, f"{base_pdf}_PRIMEIRA_VERSAO_{data_proc}.csv")
+
+    dir_out = dir_pdf.replace("Escalas_Executadas", "Auditoria_Calculos")
+    os.makedirs(dir_out, exist_ok=True)
+    return os.path.join(dir_out, f"{base_pdf}_PRIMEIRA_VERSAO_{data_proc}.csv")
+
+
+def _erro(msg: str):
+    print("ERRO:", msg)
+    try:
+        messagebox.showerror("Erro", msg)
+    except tk.TclError:
+        pass
+
+
+def _serie_coluna_por_posicao(df: pd.DataFrame, pos: int) -> pd.Series:
+    """Retorna a série da coluna pela posição, ou vazia se não existir."""
+    if pos < 0 or pos >= len(df.columns):
+        return pd.Series([""] * len(df), index=df.index, dtype="object")
+    col = df.columns[pos]
+    return df[col].fillna("").astype(str)
+
+
+def _normalizar_data_base(v: str) -> str:
+    """Converte o valor da coluna 0 para dd/mm/aaaa (sem hora)."""
+    if v is None:
+        return ""
+    s = str(v).strip()
+    if s in {"", "-", "nan", "NaN"}:
+        return ""
+
+    s_up = s.upper()
+    repl = {
+        "DEZ": "DEC", "FEV": "FEB", "ABR": "APR", "MAI": "MAY",
+        "AGO": "AUG", "SET": "SEP", "OUT": "OCT",
+    }
+    for k, x in repl.items():
+        s_up = s_up.replace(k, x)
+
+    formatos = [
+        "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y",
+        "%d%b%Y", "%d%b%y", "%Y-%m-%d", "%Y/%m/%d",
+        "%d-%b-%Y", "%d-%b-%y",
+    ]
+
+    for fmt in formatos:
+        try:
+            dt = datetime.strptime(s_up, fmt)
+            return dt.strftime("%d/%m/%Y")
+        except Exception:
+            pass
+
+    try:
+        dt = pd.to_datetime(s_up, errors="coerce", dayfirst=True)
+        if pd.notna(dt):
+            return dt.strftime("%d/%m/%Y")
+    except Exception:
+        pass
+
+    return ""
+
+
+def _compor_data_hora(data_base: str, hhmm: str) -> str:
+    data_base = (data_base or "").strip()
+    hhmm = (hhmm or "").strip()
+    if not data_base or not hhmm:
+        return ""
+    return f"{data_base} {hhmm}"
+
+
+def _primeiros_n(v: str, n: int) -> str:
+    s = str(v or "").strip()
+    return s[:n] if s else ""
+
+
+def _ultimos_n(v: str, n: int) -> str:
+    s = str(v or "").strip()
+    return s[-n:] if s else ""
+
+
+def _parse_hora_e_deslocamento(v: str):
+    """Extrai hora e deslocamento de dia de valores como '04:20(+1)'.
+
+    Retorna (hora, dias, bruto_limpo).
+    Se não houver deslocamento, dias = 0.
+    """
+    s = str(v or "").strip()
+    if not s:
+        return "", 0, ""
+
+    s = s.replace(" ", "")
+    m = re.search(r"(?P<hhmm>\d{1,2}:\d{2})(?:\(\+?(?P<dias>\d+)\))?", s)
+    if not m:
+        return s, 0, s
+
+    hhmm = m.group("hhmm")
+    dias = int(m.group("dias") or 0)
+    if len(hhmm) == 4:
+        hhmm = "0" + hhmm
+    return hhmm, dias, s
+
+
+def _compor_data_hora_deslocada(data_base: str, hora: str, dias: int = 0) -> str:
+    """Compoe data + hora aplicando deslocamento de dias."""
+    data_base = (data_base or "").strip()
+    hora = (hora or "").strip()
+    if not data_base or not hora:
+        return ""
+
+    try:
+        dt_base = datetime.strptime(data_base, "%d/%m/%Y")
+    except Exception:
+        return f"{data_base} {hora}" if hora else ""
+
+    try:
+        dt_final = dt_base + pd.Timedelta(days=int(dias or 0))
+        return f"{dt_final.strftime('%d/%m/%Y')} {hora}"
+    except Exception:
+        return f"{data_base} {hora}"
+
+
+def _montar_layout_latam_por_posicao(df: pd.DataFrame, return_auditoria: bool = False):
+    """
+    Regras solicitadas:
+    - Activity = col 4; se em branco, usar col 2
+    - Checkin  = data(col 0 convertida) + ' ' + 5 primeiros chars da col 3
+    - Start    = data(col 0 convertida) + ' ' + 5 últimos chars da col 7
+    - Dep      = 3 primeiros chars da col 7
+    - Arr      = 3 primeiros chars da col 8
+    - End      = data(col 0 convertida) + ' ' + 5 últimos chars da col 8
+    - Checkout = data(col 0 convertida) + ' ' + 5 primeiros chars da col 9
+    - AcVer    = col 13
+    - DD       = em branco
+    - CAT      = col 6
+    - Crew     = em branco
+    """
+    c0 = _serie_coluna_por_posicao(df, 0)
+    c2 = _serie_coluna_por_posicao(df, 2)
+    c3 = _serie_coluna_por_posicao(df, 3)
+    c4 = _serie_coluna_por_posicao(df, 4)
+    c6 = _serie_coluna_por_posicao(df, 6)
+    c7 = _serie_coluna_por_posicao(df, 7)
+    c8 = _serie_coluna_por_posicao(df, 8)
+    c9 = _serie_coluna_por_posicao(df, 9)
+    c13 = _serie_coluna_por_posicao(df, 13)
+
+    # Propaga a data-base para linhas de continuação do mesmo dia.
+    c0_base = c0.replace(r"^\s*$", pd.NA, regex=True)
+    c0_base = c0_base.replace({"-": pd.NA, "nan": pd.NA, "NaN": pd.NA})
+    c0_base = c0_base.ffill().fillna("")
+    data_conv = c0_base.apply(_normalizar_data_base)
+
+    c3_hora_dia = c3.apply(_parse_hora_e_deslocamento)
+    c7_hora_dia = c7.apply(_parse_hora_e_deslocamento)
+    c8_hora_dia = c8.apply(_parse_hora_e_deslocamento)
+    c9_hora_dia = c9.apply(_parse_hora_e_deslocamento)
+
+    c3_hora = c3_hora_dia.apply(lambda t: t[0])
+    c3_dias = c3_hora_dia.apply(lambda t: t[1])
+    c7_hora = c7_hora_dia.apply(lambda t: t[0])
+    c7_dias = c7_hora_dia.apply(lambda t: t[1])
+    c8_hora = c8_hora_dia.apply(lambda t: t[0])
+    c8_dias = c8_hora_dia.apply(lambda t: t[1])
+    c9_hora = c9_hora_dia.apply(lambda t: t[0])
+    c9_dias = c9_hora_dia.apply(lambda t: t[1])
+
+    # Quando a coluna 3 carrega (+1), (+2), etc., ela define o dia-base da linha.
+    # Start deve seguir apenas essa referência da linha.
+    # End/Checkout podem usar o deslocamento próprio da célula, se existir.
+    base_dia_linha = pd.to_numeric(c3_dias, errors="coerce").fillna(0).astype(int)
+    has_new_date = c0_base.astype(str).str.strip().ne("")
+
+    # Propaga deslocamento de forma condicional (sem usar comparações com NA)
+    dias_array = base_dia_linha.values.copy()
+    for idx in range(1, len(dias_array)):
+        # Se linha atual tem data nova e offset=0, mantém 0 (não herda)
+        if has_new_date.iloc[idx] and dias_array[idx] == 0:
+            dias_array[idx] = 0
+        # Se linha é continuação (sem data) e tem offset anterior, herda
+        elif not has_new_date.iloc[idx] and dias_array[idx] == 0:
+            dias_array[idx] = dias_array[idx - 1]
+
+    base_dia_linha = pd.Series(dias_array, index=base_dia_linha.index).astype(int)
+
+    start_dias = base_dia_linha
+    end_dias = c8_dias.where(c8_dias > 0, base_dia_linha)
+    checkout_dias = c9_dias.where(c9_dias > 0, base_dia_linha)
+
+    out = pd.DataFrame(index=df.index)
+    out["Activity"] = c4.where(c4.astype(str).str.strip() != "", c2)
+
+    starts = []
+    ends = []
+    checkins = []
+    checkouts = []
+    prev_end_dt = None
+
+    for idx, (d, ch, ch_days, st, st_days, ed, ed_days, co, co_days) in enumerate(zip(
+        data_conv, c3_hora, c3_dias, c7_hora, start_dias, c8_hora, end_dias, c9_hora, checkout_dias
+    )):
+        checkin_val = ""
+        if has_new_date.iloc[idx] and str(ch).strip():
+            checkin_val = _compor_data_hora_deslocada(d, ch, ch_days)
+        checkins.append(checkin_val)
+
+        start_val = _compor_data_hora_deslocada(d, st, st_days)
+        end_val = _compor_data_hora_deslocada(d, ed, ed_days)
+        checkout_val = _compor_data_hora_deslocada(d, co, co_days)
+
+        # Se o Checkin está em branco, estamos na mesma jornada da linha anterior.
+        # Nesse caso, o Start precisa ficar depois do End anterior, podendo avançar a data.
+        if not checkin_val and prev_end_dt is not None:
+            start_dt = pd.to_datetime(start_val, errors="coerce", dayfirst=True)
+            if pd.notna(start_dt):
+                while start_dt <= prev_end_dt:
+                    start_dt += pd.Timedelta(days=1)
+                start_val = start_dt.strftime("%d/%m/%Y %H:%M")
+                # Para continuidade de jornada, End e Checkout devem seguir a mesma data-base do Start
+                # sem aplicar os deslocamentos (+1)/(+2) das colunas 8 e 9.
+                base_date_str = start_dt.strftime("%d/%m/%Y")
+                end_val = _compor_data_hora_deslocada(base_date_str, ed, 0)
+                checkout_val = _compor_data_hora_deslocada(base_date_str, co, 0)
+
+        starts.append(start_val)
+        ends.append(end_val)
+        checkouts.append(checkout_val)
+
+        prev_end_dt = pd.to_datetime(end_val, errors="coerce", dayfirst=True)
+
+    out["Start"] = starts
+    out["End"] = ends
+
+    out["Checkin"] = checkins
+    out["Dep"] = c7.apply(lambda x: _primeiros_n(x, 3))
+    out["Arr"] = c8.apply(lambda x: _primeiros_n(x, 3))
+
+    out["Checkout"] = checkouts
+    out["AcVer"] = c13
+    out["DD"] = ""
+    out["CAT"] = c6
+    out["Crew"] = ""
+
+    # Base de auditoria (antes de filtrar)
+    auditoria = pd.DataFrame(index=df.index)
+    auditoria["src_col_0"] = c0
+    auditoria["src_col_0_ffill"] = c0_base
+    auditoria["src_col_2"] = c2
+    auditoria["src_col_3"] = c3
+    auditoria["src_col_4"] = c4
+    auditoria["src_col_6"] = c6
+    auditoria["src_col_7"] = c7
+    auditoria["src_col_8"] = c8
+    auditoria["src_col_9"] = c9
+    auditoria["src_col_13"] = c13
+    auditoria["data_convertida_col0"] = data_conv
+    auditoria["c3_hora"] = c3_hora
+    auditoria["c3_dias"] = c3_dias
+    auditoria["c7_hora"] = c7_hora
+    auditoria["c7_dias"] = c7_dias
+    auditoria["c8_hora"] = c8_hora
+    auditoria["c8_dias"] = c8_dias
+    auditoria["c9_hora"] = c9_hora
+    auditoria["c9_dias"] = c9_dias
+    auditoria["start_dias_usado"] = start_dias
+    auditoria["end_dias_usado"] = end_dias
+    auditoria["checkout_dias_usado"] = checkout_dias
+
+    # Mantém linhas com qualquer conteúdo útil.
+    # A data-base propagada preserva linhas de continuação do mesmo dia.
+    mask_keep = (
+        data_conv.astype(str).str.strip().ne("") |
+        c2.astype(str).str.strip().ne("") |
+        c3.astype(str).str.strip().ne("") |
+        c4.astype(str).str.strip().ne("") |
+        c6.astype(str).str.strip().ne("") |
+        c7.astype(str).str.strip().ne("") |
+        c8.astype(str).str.strip().ne("") |
+        c9.astype(str).str.strip().ne("") |
+        c13.astype(str).str.strip().ne("")
+    )
+    out = out[mask_keep].copy()
+    auditoria = auditoria[mask_keep].copy()
+
+    # Resultado final para conferência lado a lado
+    for c in CSV_COLUMNS:
+        auditoria[f"out_{c}"] = out[c]
+
+    out = out[CSV_COLUMNS].reset_index(drop=True)
+    auditoria = auditoria.reset_index(drop=True)
+
+    if return_auditoria:
+        return out, auditoria
+    return out
+
+
+def _eh_linha_numeracao_colunas(row_values) -> bool:
+    """Detecta linha artificial como: 0;1;2;3;..."""
+    vals = [str(v).strip() for v in row_values]
+    vals = [v for v in vals if v != ""]
+    if len(vals) < 3:
+        return False
+
+    if all(v.isdigit() for v in vals):
+        nums = [int(v) for v in vals]
+        # Aceita sequência crescente (0..N, 1..N, etc.)
+        diffs = [b - a for a, b in zip(nums, nums[1:])]
+        if nums == list(range(nums[0], nums[0] + len(nums))) and all(d == 1 for d in diffs):
+            return True
+
+    return False
+
+
+def _eh_linha_cabecalho_rodape_latam(row_values) -> bool:
+    txt = " ".join(str(v).strip() for v in row_values if str(v).strip())
+    if not txt:
+        return False
+    up = txt.upper()
+
+    return any([
+        "ROSTER REPORT" in up,
+        "PRINTED" in up,
+        "PAGE" in up and "OF" in up,
+        "UNNAMED:" in up,
+        "MATRÍCULA" in up,
+        "MATRICULA" in up,
+        "CAUDURO" in up,
+        "JAEGER" in up,
+        bool(re.search(r"^\s*\d{1,2}-[A-Z]{3}-\d{4}\s*$", up)),
+    ])
+
+
+def _limpar_tabela_bruta_latam(df: pd.DataFrame) -> pd.DataFrame:
+    """Limpa ruídos de extração e mantém a estrutura por posição de coluna."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    x = df.copy()
+    x = x.fillna("").astype(str)
+    #x = x.applymap(lambda v: v.replace("\r", " ").replace("\n", " ").strip())
+
+    x = x.map(lambda v: v.replace("\r", " ").replace("\n", " ").strip())
+
+    # Preserva a posição original das colunas extraídas pelo Tabula.
+    # Não removemos colunas vazias intermediárias porque isso desloca os índices.
+    if x.shape[1] == 0:
+        return pd.DataFrame()
+
+    # Reindexa colunas para posição fixa 0..N
+    x.columns = list(range(len(x.columns)))
+
+    # Remove linhas totalmente vazias
+    mask_not_empty = x.apply(lambda r: any(str(v).strip() for v in r), axis=1)
+    x = x[mask_not_empty].copy()
+    if x.empty:
+        return x
+
+    # Remove linha artificial de numeração de colunas e cabeçalho/rodapé de página
+    mask_keep = []
+    for _, row in x.iterrows():
+        vals = row.tolist()
+        if _eh_linha_numeracao_colunas(vals):
+            mask_keep.append(False)
+            continue
+        if _eh_linha_cabecalho_rodape_latam(vals):
+            mask_keep.append(False)
+            continue
+        mask_keep.append(True)
+
+    x = x[pd.Series(mask_keep, index=x.index)].copy()
+    x.reset_index(drop=True, inplace=True)
+    return x
+
+
+def _unificar_tabelas_alinhadas(tabelas: list[pd.DataFrame]) -> pd.DataFrame:
+    """Une tabelas preservando a largura máxima para avaliação de alinhamento."""
+    if not tabelas:
+        return pd.DataFrame()
+
+    max_cols = max((tab.shape[1] for tab in tabelas if tab is not None and not tab.empty), default=0)
+    if max_cols == 0:
+        return pd.DataFrame()
+
+    blocos = []
+    for tab in tabelas:
+        if tab is None or tab.empty:
+            continue
+        t = tab.copy().fillna("").astype(str)
+        t = t.reindex(columns=range(max_cols), fill_value="")
+        blocos.append(t)
+
+    if not blocos:
+        return pd.DataFrame()
+
+    df_unificado = pd.concat(blocos, ignore_index=True)
+    df_unificado.columns = [f"col_{i}" for i in range(df_unificado.shape[1])]
+    return df_unificado
+
+
+def _ler_tabelas_pdf(pdf_path: str):
+    """Lê PDF via tabula com tentativas em lattice e stream."""
+    # Tentativa 1: lattice (melhor para tabela com borda)
+    data = tabula.read_pdf(
+        pdf_path,
+        lattice=True,
+        encoding="utf-8",
+        pages="all",
+        multiple_tables=True,
+        pandas_options={"dtype": str, "header": None},
+    )
+    if data and len(data) > 0:
+        return data
+
+    # Tentativa 2: stream (melhor para layout sem borda)
+    data = tabula.read_pdf(
+        pdf_path,
+        stream=True,
+        guess=True,
+        encoding="utf-8",
+        pages="all",
+        multiple_tables=True,
+        pandas_options={"dtype": str, "header": None},
+    )
+    if data and len(data) > 0:
+        return data
+
+    return []
+
+
+def _normalizar_datas_serie(series: pd.Series) -> pd.Series:
+    def _fix(v):
+        if pd.isna(v):
+            return ""
+        s = str(v).strip()
+        if s in {"-", ""}:
+            return s
+
+        # Corrige casos invertidos como: '04:20 17/05/2026'
+        m_inv = re.match(r"^(\d{1,2}:\d{2})\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})$", s)
+        if m_inv:
+            s = f"{m_inv.group(2)} {m_inv.group(1)}"
+
+        s_up = s.upper()
+        repl = {
+            "DEZ": "DEC", "FEV": "FEB", "ABR": "APR", "MAI": "MAY",
+            "AGO": "AUG", "SET": "SEP", "OUT": "OCT",
+        }
+        for k, x in repl.items():
+            s_up = s_up.replace(k, x)
+        return s_up
+
+    corrected = series.apply(_fix)
+
+    fmts = [
+        "%d/%m/%Y %H:%M", "%d-%m-%Y %H:%M", "%d/%m/%y %H:%M", "%d-%m-%y %H:%M",
+        "%d%b%Y %H:%M", "%d%b%y %H:%M",
+        "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M",
+    ]
+
+    converted = pd.Series(pd.NaT, index=corrected.index, dtype="datetime64[ns]")
+    parse_mask = corrected.notna() & (corrected != "-") & (corrected != "")
+
+    for fmt in fmts:
+        mask = parse_mask & converted.isna()
+        if mask.any():
+            conv = pd.to_datetime(corrected[mask], format=fmt, errors="coerce")
+            converted.loc[mask & conv.notna()] = conv[conv.notna()]
+
+    mask = parse_mask & converted.isna()
+    if mask.any():
+        conv = pd.to_datetime(corrected[mask], errors="coerce", dayfirst=True)
+        converted.loc[mask & conv.notna()] = conv[conv.notna()]
+
+    out = corrected.astype("object")
+    ok = converted.notna()
+    if ok.any():
+        out.loc[ok] = converted.loc[ok].dt.strftime("%d/%m/%Y %H:%M")
+
+    return out
+
+
+def _ajustar_datas_do_dr(df: pd.DataFrame) -> pd.DataFrame:
+    """Corrige DO/DR quando Checkin/Start ficam após End/Checkout.
+
+    Regra prática: para atividades `DO` e `DR`, se `Checkin` ou `Start`
+    ficarem com data/hora maior que a referência final da linha (`End`/`Checkout`),
+    recua 1 dia até não ultrapassar a referência.
+    """
+    if df.empty or "Activity" not in df.columns:
+        return df
+
+    out = df.copy()
+    atividade = out["Activity"].fillna("").astype(str).str.strip().str.upper()
+    mask_do_dr = atividade.isin(["DO", "DR"])
+    if not mask_do_dr.any():
+        return out
+
+    def _parse_col(col_name: str) -> pd.Series:
+        if col_name not in out.columns:
+            return pd.Series(pd.NaT, index=out.index, dtype="datetime64[ns]")
+        return pd.to_datetime(out[col_name], errors="coerce", dayfirst=True)
+
+    dt_checkin = _parse_col("Checkin")
+    dt_start = _parse_col("Start")
+    dt_end = _parse_col("End")
+    dt_checkout = _parse_col("Checkout")
+
+    ref_final = dt_end.copy()
+    usar_checkout = ref_final.isna() | (dt_checkout.notna() & (dt_checkout < ref_final))
+    ref_final.loc[usar_checkout] = dt_checkout.loc[usar_checkout]
+
+    for col_name, dt_col in [("Checkin", dt_checkin), ("Start", dt_start)]:
+        valores = dt_col.copy()
+        mask = mask_do_dr & valores.notna() & ref_final.notna() & (valores > ref_final)
+        if not mask.any():
+            continue
+
+        while mask.any():
+            valores.loc[mask] = valores.loc[mask] - pd.Timedelta(days=1)
+            mask = mask_do_dr & valores.notna() & ref_final.notna() & (valores > ref_final)
+
+        out.loc[valores.notna(), col_name] = valores.loc[valores.notna()].dt.strftime("%d/%m/%Y %H:%M")
+
+    return out
+
+
+def _corrigir_continuidade_jornadas(df: pd.DataFrame) -> pd.DataFrame:
+    """Garante coerência temporal em linhas sem Checkin (continuação de jornada).
+
+    Regras:
+    - Se `Checkin` estiver vazio, então `Start` deve ser > `End` anterior.
+    - `End` não pode ser menor que `Start`.
+    - `Checkout` não pode ser menor que `End`.
+    """
+    if df.empty:
+        return df
+
+    out = df.copy()
+
+    def _to_dt(v: str):
+        return pd.to_datetime(v, errors="coerce", dayfirst=True)
+
+    prev_end = pd.NaT
+    for idx in out.index:
+        act = str(out.at[idx, "Activity"]).strip().upper() if "Activity" in out.columns else ""
+        ch = str(out.at[idx, "Checkin"]).strip() if "Checkin" in out.columns else ""
+
+        ch_dt = _to_dt(ch) if ch else pd.NaT
+        st = _to_dt(out.at[idx, "Start"]) if "Start" in out.columns else pd.NaT
+        en = _to_dt(out.at[idx, "End"]) if "End" in out.columns else pd.NaT
+        co = _to_dt(out.at[idx, "Checkout"]) if "Checkout" in out.columns else pd.NaT
+
+        # Se há checkin válido (ex.: DR), ele não pode ficar anterior ao End da linha anterior.
+        # Quando isso ocorrer, avança a linha inteira em dias para manter coerência.
+        if pd.notna(ch_dt) and pd.notna(prev_end):
+            delta_days = 0
+            while ch_dt < prev_end:
+                ch_dt += pd.Timedelta(days=1)
+                delta_days += 1
+            if delta_days > 0:
+                if pd.notna(st):
+                    st += pd.Timedelta(days=delta_days)
+                if pd.notna(en):
+                    en += pd.Timedelta(days=delta_days)
+                if pd.notna(co):
+                    co += pd.Timedelta(days=delta_days)
+
+        # Dentro da linha, Start deve ser >= Checkin quando ambos existem.
+        if pd.notna(ch_dt) and pd.notna(st):
+            delta_days = 0
+            while st < ch_dt:
+                st += pd.Timedelta(days=1)
+                delta_days += 1
+            if delta_days > 0:
+                if pd.notna(en):
+                    en += pd.Timedelta(days=delta_days)
+                if pd.notna(co):
+                    co += pd.Timedelta(days=delta_days)
+
+        # Continuação de jornada (sem checkin)
+        if ch == "" and pd.notna(prev_end) and pd.notna(st):
+            delta_days = 0
+            while st <= prev_end:
+                st += pd.Timedelta(days=1)
+                delta_days += 1
+            if delta_days > 0:
+                if pd.notna(en):
+                    en += pd.Timedelta(days=delta_days)
+                if pd.notna(co):
+                    co += pd.Timedelta(days=delta_days)
+
+        # Ordem temporal dentro da mesma linha
+        if pd.notna(st) and pd.notna(en):
+            while en < st:
+                en += pd.Timedelta(days=1)
+
+        if pd.notna(en) and pd.notna(co):
+            while co < en:
+                co += pd.Timedelta(days=1)
+
+        if pd.notna(st) and "Start" in out.columns:
+            out.at[idx, "Start"] = st.strftime("%d/%m/%Y %H:%M")
+        if pd.notna(ch_dt) and "Checkin" in out.columns:
+            out.at[idx, "Checkin"] = ch_dt.strftime("%d/%m/%Y %H:%M")
+        if pd.notna(en) and "End" in out.columns:
+            out.at[idx, "End"] = en.strftime("%d/%m/%Y %H:%M")
+        if pd.notna(co) and "Checkout" in out.columns:
+            out.at[idx, "Checkout"] = co.strftime("%d/%m/%Y %H:%M")
+
+        if pd.notna(en):
+            prev_end = en
+
+    return out
+
+
+def _limpar_e_ajustar(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.replace("\r", " ", regex=True, inplace=True)
+    df.replace("- nan", "-", regex=True, inplace=True)
+    df.dropna(how="all", inplace=True)
+    df.reset_index(drop=True, inplace=True)
+
+    # Remove linhas de total/rodapé
+    if "Activity" in df.columns:
+        a = df["Activity"].astype(str).str.upper().str.strip()
+        df = df[~a.isin(["TOTAL:", "TOTAL", "OCULTO", "NAN"])].copy()
+
+    # Ajustes padrão de checkin/checkout
+    if {"Activity", "Checkin", "Start"}.issubset(df.columns):
+        activity_upper = df["Activity"].astype(str).str.upper()
+        mask = (df["Checkin"].astype(str).str.strip() == "-") & (~activity_upper.str.startswith(("AD", "LA"), na=False))
+        df.loc[mask, "Checkin"] = df.loc[mask, "Start"]
+
+    if {"Checkout", "End"}.issubset(df.columns):
+        m2 = df["Checkout"].astype(str).str.strip().isin(["", "-"])
+        df.loc[m2, "Checkout"] = df.loc[m2, "End"]
+
+    # Normaliza todas as colunas de data/hora e corrige inversões data<->hora.
+    for col in ["Checkin", "Start", "End", "Checkout"]:
+        if col in df.columns:
+            df[col] = _normalizar_datas_serie(df[col])
+
+    df = _ajustar_datas_do_dr(df)
+    df = _corrigir_continuidade_jornadas(df)
+
+    # Garante colunas finais
+    for c in CSV_COLUMNS:
+        if c not in df.columns:
+            df[c] = ""
+
+    return df[CSV_COLUMNS].reset_index(drop=True)
+
+
+# ---------------------------
+# Nova função: remover colunas totalmente vazias
+# ---------------------------
+def drop_colunas_totalmente_vazias(df: pd.DataFrame, treat_as_empty=None) -> pd.DataFrame:
+    """
+    Remove colunas cujo conteúdo, em todas as linhas, é considerado "vazio".
+    Parâmetros:
+      - df: DataFrame de entrada.
+      - treat_as_empty: lista de strings adicionais a tratar como vazias (ex: ["-", "nan"]).
+    Retorna:
+      - DataFrame com colunas totalmente vazias removidas.
+    """
+    if df is None or df.empty:
+        return df.copy()
+
+    treat_as_empty = set(treat_as_empty or [])
+    # Normaliza cada célula para string e verifica se é vazia após strip
+    def _is_empty_cell(x):
+        if pd.isna(x):
+            return True
+        s = str(x).strip()
+        if s == "":
+            return True
+        if s in treat_as_empty:
+            return True
+        return False
+
+    # Cria máscara booleana por coluna: True se todas as células são "vazias"
+    cols_para_remover = []
+    for col in df.columns:
+        col_vals = df[col].apply(_is_empty_cell)
+        if col_vals.all():
+            cols_para_remover.append(col)
+
+    if cols_para_remover:
+        # Log simples para auditoria
+        print(f"Removendo colunas totalmente vazias: {cols_para_remover}")
+        return df.drop(columns=cols_para_remover)
+    return df.copy()
+
+
+# ---------------------------
+# Nova função: detectar '<==' e ajustar início do mês (data_ref - 1 dia)
+# ---------------------------
+def ajustar_inicio_mes_por_marcador(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Se a coluna 0 linha 0 contém '<==', aplica a lógica:
+      1) encontra a primeira data explícita na coluna 0 (ex: 02-Jun-2026)
+      2) armazena essa data como referência
+      3) retrocede até encontrar a linha com hora válida na coluna 3
+      4) calcula data_inicial = referencia - 1 dia (sem procurar dia 1)
+      5) atribui data_inicial (formatada dd/mm/YYYY) às linhas do bloco (desde a linha encontrada até a linha anterior à data explícita)
+    Retorna o DataFrame com a coluna 0 ajustada (mantendo demais colunas).
+    """
+    if df is None or df.empty:
+        return df
+
+    x = df.copy().reset_index(drop=True)
+
+    # garante existência da coluna 0
+    if 0 not in x.columns:
+        return x
+
+    primeira_celula = str(x.at[0, 0]).strip() if 0 in x.columns else ""
+    if primeira_celula != "<==":
+        return x
+
+    # 1) encontrar primeira linha com data válida na coluna 0
+    idx_data = None
+    data_ref_dt = None
+    for i in range(len(x)):
+        raw = str(x.at[i, 0]).strip()
+        norm = _normalizar_data_base(raw)
+        if norm:
+            try:
+                data_ref_dt = datetime.strptime(norm, "%d/%m/%Y")
+                idx_data = i
+                break
+            except Exception:
+                continue
+
+    if idx_data is None or data_ref_dt is None:
+        return x
+
+    # 2) retroceder até encontrar linha com hora válida na coluna 3
+    idx_hora = None
+    for j in range(idx_data - 1, -1, -1):
+        raw3 = str(x.at[j, 3]) if 3 in x.columns else ""
+        hh, dias, bruto = _parse_hora_e_deslocamento(raw3)
+        if hh:
+            idx_hora = j
+            break
+
+    if idx_hora is None:
+        return x
+
+    # 3) calcular data inicial: referencia - 1 dia (sem procurar dia 1)
+    candidate = data_ref_dt - timedelta(days=1)
+    data_inicial_str = candidate.strftime("%d/%m/%Y")
+
+    # 4) atribuir data_inicial às linhas do bloco: desde idx_hora até idx_data-1 (inclusive)
+    start_idx = idx_hora
+    end_idx = idx_data  # exclusive
+    for k in range(start_idx, end_idx):
+        x.at[k, 0] = data_inicial_str
+
+    return x
+
+
+def main():
+    dir_in, arq_in = selecionar_diretorio_arquivo()
+    if not (dir_in and arq_in):
+        _erro("Nenhum PDF selecionado.")
+        return
+
+    arquivo_path = os.path.join(dir_in, arq_in)
+    if not arquivo_path.lower().endswith(".pdf"):
+        _erro("O arquivo selecionado não é um PDF.")
+        return
+
+    print("\n📖 Lendo PDF LATAM e extraindo tabelas...")
+    with tqdm(total=100, desc="📄 Processando PDF", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") as pbar:
+        pbar.update(20)
+        imported_data = _ler_tabelas_pdf(arquivo_path)
+        pbar.update(80)
+
+    if not imported_data:
+        _erro("Não foi possível extrair tabelas do PDF LATAM (lattice/stream).")
+        return
+
+    print(f"✅ {len(imported_data)} página(s) extraída(s) com sucesso!\n")
+
+    print("🧩 Unificando páginas no mesmo processamento e limpando ruídos...")
+    tabelas_limpas = []
+    for df_tab in imported_data:
+        df_limpa = _limpar_tabela_bruta_latam(df_tab)
+        if not df_limpa.empty:
+            tabelas_limpas.append(df_limpa)
+
+    if not tabelas_limpas:
+        _erro("Após limpeza, nenhuma tabela válida foi encontrada no PDF LATAM.")
+        return
+
+    print(f"✅ {len(tabelas_limpas)} tabela(s) válida(s) após união/limpeza.")
+
+    # Gera apenas o CSV principal PRIMEIRA_VERSAO
+    csv_out = nome_csv_saida_para(arquivo_path)
+
+    print("🔧 Montando layout LATAM por posição (páginas já unificadas)...")
+    tabelas_auditoria = []
+    try:
+        df_unificado = _unificar_tabelas_alinhadas(tabelas_limpas)
+        if df_unificado.empty:
+            _erro("Não foi possível unificar tabelas para montagem do layout LATAM.")
+            return
+
+        # ---------------------------
+        # Aqui aplicamos a remoção de colunas totalmente vazias
+        # ---------------------------
+        print(f"Colunas antes da limpeza: {df_unificado.shape[1]}")
+        df_unificado = drop_colunas_totalmente_vazias(df_unificado, treat_as_empty=["-", "nan", "NaN"])
+        # Reindexa para garantir colunas 0..N se necessário (mantém compatibilidade com _serie_coluna_por_posicao)
+        df_unificado = df_unificado.reset_index(drop=True)
+        # Se as colunas eram nomeadas col_0..col_N, renomeamos para índices numéricos 0..N
+        df_unificado.columns = list(range(df_unificado.shape[1]))
+        print(f"Colunas depois da limpeza: {df_unificado.shape[1]}")
+
+        # ---------------------------
+        # Ajuste de início do mês quando marcador '<==' presente
+        # ---------------------------
+        df_unificado = ajustar_inicio_mes_por_marcador(df_unificado)
+
+        # Agora montamos o layout por posição usando o DataFrame limpo e ajustado
+        df_std, df_auditoria_unificado = _montar_layout_latam_por_posicao(df_unificado, return_auditoria=True)
+
+        # --- Início: cortar linhas anteriores ao primeiro dia do mês ---
+        try:
+            # tenta obter série de datas convertidas (preferir auditoria se disponível)
+            if 'df_auditoria_unificado' in locals() and "data_convertida_col0" in df_auditoria_unificado.columns:
+                data_conv_ser = df_auditoria_unificado["data_convertida_col0"].astype(str).replace({"": None})
+            else:
+                # fallback: usar coluna 0 do df_unificado (se existir)
+                if 0 in df_unificado.columns:
+                    data_conv_ser = df_unificado[0].astype(str).apply(_normalizar_data_base).replace({"": None})
+                else:
+                    data_conv_ser = pd.Series([None] * len(df_std))
+
+            # converte para datetime (dayfirst)
+            data_conv_dt = pd.to_datetime(data_conv_ser, format="%d/%m/%Y", errors="coerce", dayfirst=True)
+
+            # encontra o índice da primeira ocorrência cujo dia == 1
+            mask_day1 = data_conv_dt.dt.day == 1
+            if mask_day1.any():
+                first_idx = mask_day1.idxmax()  # primeiro True
+                # cortar df_std and auditoria a partir desse índice (se existirem)
+                df_std = df_std.iloc[first_idx:].reset_index(drop=True)
+                if 'df_auditoria_unificado' in locals():
+                    df_auditoria_unificado = df_auditoria_unificado.iloc[first_idx:].reset_index(drop=True)
+                print(f"Ajuste: removidas linhas anteriores ao primeiro dia do mês (início em índice {first_idx}).")
+            else:
+                print("Aviso: não foi encontrada linha com dia=1 em data_conv; nenhum corte aplicado.")
+        except Exception as _e:
+            print("Aviso ao aplicar filtro do primeiro dia do mês:", _e)
+        # --- Fim: cortar linhas anteriores ao primeiro dia do mês ---
+
+        # --- Início: forçar data da primeira activity do mês (ex.: LA3391) para o primeiro dia do mês ---
+        try:
+            # determina primeiro dia do mês a partir de df_std["Start"] ou df_auditoria_unificado["data_convertida_col0"]
+            if "Start" in df_std.columns and df_std["Start"].notna().any():
+                # extrai data do primeiro Start válido
+                first_start_dt = pd.to_datetime(df_std["Start"].dropna().iloc[0], dayfirst=True, errors="coerce")
+            elif 'df_auditoria_unificado' in locals() and "data_convertida_col0" in df_auditoria_unificado.columns:
+                first_start_dt = pd.to_datetime(df_auditoria_unificado["data_convertida_col0"].dropna().iloc[0], dayfirst=True, errors="coerce")
+            else:
+                first_start_dt = None
+
+            if first_start_dt is not None and pd.notna(first_start_dt):
+                primeiro_dia_mes = first_start_dt.replace(day=1)
+                # localizar primeira linha com Activity que pareça voo (LAxxxx) — ou especificamente LA3391
+                mask_activity = df_std["Activity"].astype(str).str.strip().str.upper().str.startswith("LA")
+                if mask_activity.any():
+                    idx_first_activity = mask_activity.idxmax()
+                    # ajustar Checkin/Start/End/Checkout dessa linha se necessário
+                    # apenas ajusta a data (mantém hora)
+                    def _force_date(v):
+                        try:
+                            dt = pd.to_datetime(v, dayfirst=True, errors="coerce")
+                            if pd.isna(dt):
+                                return v
+                            return dt.replace(year=primeiro_dia_mes.year, month=primeiro_dia_mes.month, day=primeiro_dia_mes.day).strftime("%d/%m/%Y %H:%M")
+                        except Exception:
+                            return v
+
+                    for col in ["Checkin", "Start", "End", "Checkout"]:
+                        if col in df_std.columns and str(df_std.at[idx_first_activity, col]).strip():
+                            df_std.at[idx_first_activity, col] = _force_date(df_std.at[idx_first_activity, col])
+                    print(f"Ajuste: primeira activity (índice {idx_first_activity}) forçada para {primeiro_dia_mes.strftime('%d/%m/%Y')}.")
+        except Exception as _e:
+            print("Aviso ao forçar data da primeira activity:", _e)
+        # --- Fim: forçar data da primeira activity ---
+
+    except Exception as e:
+        _erro(f"Erro durante montagem do layout LATAM: {e}")
+        return
+
+    # Limpa e ajusta o resultado final
+    try:
+        df_final = _limpar_e_ajustar(df_std)
+    except Exception as e:
+        _erro(f"Erro ao ajustar/normalizar datas e jornadas: {e}")
+        return
+
+    # Salva CSV principal
+    try:
+        df_final.to_csv(csv_out, index=False, encoding="utf-8")
+        print(f"\n✅ CSV PRIMEIRA_VERSAO gerado: {csv_out}")
+    except Exception as e:
+        _erro(f"Erro ao salvar CSV: {e}")
+        return
+
+    # Sincroniza auditoria com valores finais e salva auditoria (se desejar)
+    try:
+        if 'df_auditoria_unificado' in locals() and not df_auditoria_unificado.empty:
+            df_auditoria_unificado = df_auditoria_unificado.reset_index(drop=True)
+            df_final_sync = df_final.reset_index(drop=True)
+
+            # Se df_auditoria_unificado tiver menos linhas que df_final, expande com NaNs
+            if len(df_auditoria_unificado) < len(df_final_sync):
+                extra = pd.DataFrame(index=range(len(df_final_sync) - len(df_auditoria_unificado)))
+                df_auditoria_unificado = pd.concat([df_auditoria_unificado, extra], ignore_index=True)
+
+            # Copia os valores finais para as colunas de saída da auditoria
+            for c in CSV_COLUMNS:
+                df_auditoria_unificado[f"out_{c}"] = df_final_sync[c] if c in df_final_sync.columns else ""
+
+            # Agora salva a auditoria (xlsx se openpyxl disponível, senão CSV)
+            auditoria_out = csv_out.replace("_PRIMEIRA_VERSAO_", "_AUDITORIA_").rsplit(".", 1)[0] + ".xlsx"
+            if OPENPYXL_AVAILABLE:
+                with pd.ExcelWriter(auditoria_out, engine="openpyxl") as writer:
+                    df_auditoria_unificado.to_excel(writer, index=False, sheet_name="auditoria")
+                print(f"✅ Arquivo de auditoria gerado: {auditoria_out}")
+            else:
+                auditoria_csv = auditoria_out.replace(".xlsx", ".csv")
+                df_auditoria_unificado.to_csv(auditoria_csv, index=False, encoding="utf-8")
+                print(f"✅ Arquivo de auditoria (CSV) gerado: {auditoria_csv}")
+        else:
+            print("Aviso: auditoria não disponível; nenhum arquivo de auditoria gerado.")
+    except Exception as e:
+        print("Aviso: não foi possível salvar auditoria:", e)
+
+    print("\nProcessamento concluído.")
+
+
+if __name__ == "__main__":
+    main()

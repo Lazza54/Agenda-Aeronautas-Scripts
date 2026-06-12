@@ -1,0 +1,245 @@
+# -*- coding: utf-8 -*-
+"""
+IMPORTA PDF DE ESCALA LATAM -> CSV
+Versão Maestro Final: Extensão por Gatilho, Soberania do PDF na src_col_0 e Limpeza Total
+"""
+import os
+import re
+import warnings
+import subprocess
+from datetime import datetime, timedelta
+from pathlib import Path
+import pandas as pd
+import tabula
+import tkinter as tk
+from tkinter import filedialog
+
+# Verifica se a biblioteca para Excel está disponível
+try:
+    from openpyxl import Workbook
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
+
+warnings.filterwarnings("ignore")
+
+# Colunas padrão do layout de saída
+CSV_COLUMNS = ["Activity", "Checkin", "Start", "Dep", "Arr", "End", "Checkout", "AcVer", "DD", "CAT", "Crew"]
+
+def verificar_java():
+    """Configura o ambiente Java para o Tabula."""
+    java_paths = [
+        r"C:\Program Files\Java\jdk-21",
+        r"C:\Program Files\Java\jdk-17",
+        r"C:\Program Files\Java\jre-1.8",
+    ]
+    for java_path in java_paths:
+        if os.path.exists(java_path):
+            os.environ["JAVA_HOME"] = java_path
+            os.environ["PATH"] = os.path.join(java_path, "bin") + ";" + os.environ.get("PATH", "")
+            break
+    try:
+        result = subprocess.run(["java", "-version"], capture_output=True, text=True, shell=True)
+        return result.returncode == 0
+    except:
+        return False
+
+if not verificar_java():
+    raise SystemExit("Java não encontrado. Instale o JRE/JDK para continuar.")
+
+def _normalizar_data_base(v):
+    """Converte qualquer formato de data para dd/mm/YYYY."""
+    if pd.isna(v) or str(v).strip() == "": return ""
+    s = str(v).strip().upper()
+    # Tratamento para meses em PT-BR
+    repl = {"DEZ":"DEC","FEV":"FEB","ABR":"APR","MAI":"MAY","AGO":"AUG","SET":"SEP","OUT":"OCT"}
+    for k, x in repl.items(): s = s.replace(k, x)
+    formatos = ["%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y", "%d%b%Y", "%d%b%y", "%d-%b-%Y"]
+    for fmt in formatos:
+        try: return datetime.strptime(s, fmt).strftime("%d/%m/%Y")
+        except: continue
+    return ""
+
+def _extrair_horario_regex(texto):
+    """Busca o padrão HH:MM dentro de uma string."""
+    s = str(texto or "").strip()
+    if not s or s.lower() in ["nan", "none", "00:00:00"]: return ""
+    match = re.search(r'(\d{2}:\d{2})', s)
+    return match.group(1) if match else ""
+
+def _format_dt_regex(data, texto_coluna):
+    """Compõe dd/mm/yyyy hh:mm."""
+    hora = _extrair_horario_regex(texto_coluna)
+    if not data or not hora: return ""
+    return f"{data} {hora}"
+
+def processar_datas_auditoria_latam(df):
+    """
+    Aplica as Regras de Auditoria:
+    1. Retrocesso e CORTE Inicial.
+    2. Soberania do PDF: Se houver gatilho (col 3 ou 4), usa a data da src_col_0 do PDF.
+    3. Extensão: Mantém a data até o próximo gatilho.
+    4. Incremento Dinâmico (+n).
+    """
+    if 'src_col_0' not in df.columns: return df
+    
+    # Limpeza inicial de strings
+    for col in df.columns:
+        df[col] = df[col].astype(str).str.strip().replace(['nan', 'None', 'NaN', ''], pd.NA)
+
+    # --- REGRA DE RETROCESSO E CORTE INICIAL ---
+    idx_primeira_data = -1
+    dt_ref = None
+    for i in range(len(df)):
+        norm = _normalizar_data_base(df.at[i, 'src_col_0'])
+        if norm:
+            idx_primeira_data = i
+            dt_ref = datetime.strptime(norm, "%d/%m/%Y")
+            break
+    
+    start_index = 0
+    if idx_primeira_data != -1 and dt_ref.day > 1:
+        dia_alvo = dt_ref.day - 1
+        count_j = 0
+        idx_d1 = -1
+        for j in range(idx_primeira_data - 1, -1, -1):
+            if pd.notna(df.at[j, 'src_col_3']): count_j += 1
+            if count_j == dia_alvo:
+                idx_d1 = j
+                break
+        if idx_d1 != -1:
+            start_index = idx_d1
+            dt_c = dt_ref - timedelta(days=dt_ref.day - 1)
+            for k in range(idx_d1, idx_primeira_data):
+                if k > idx_d1 and pd.notna(df.at[k, 'src_col_3']): dt_c += timedelta(days=1)
+                df.at[k, 'src_col_0'] = dt_c.strftime("%d/%m/%Y")
+    elif idx_primeira_data != -1:
+        start_index = idx_primeira_data
+
+    df = df.iloc[start_index:].reset_index(drop=True)
+
+    # --- REGRA DE EXTENSÃO E SOBERANIA DO PDF ---
+    current_base_date = ""
+    active_date_calculated = ""
+
+    for i in range(len(df)):
+        # Gatilho: Valor na col 3 ou col 4
+        has_trigger = pd.notna(df.at[i, 'src_col_3']) or pd.notna(df.at[i, 'src_col_4'])
+        
+        if has_trigger:
+            # Se houver gatilho, a data do PDF (se existir) prevalece
+            pdf_date = _normalizar_data_base(df.at[i, 'src_col_0'])
+            if pdf_date:
+                current_base_date = pdf_date
+            
+            # Aplica incremento (+n) se houver na col 3
+            c3 = str(df.at[i, 'src_col_3'])
+            match = re.search(r'\((\+?\d+)\)', c3)
+            if match and current_base_date:
+                offset = int(match.group(1).replace('+', ''))
+                dt_obj = datetime.strptime(current_base_date, "%d/%m/%Y")
+                active_date_calculated = (dt_obj + timedelta(days=offset)).strftime("%d/%m/%Y")
+            else:
+                active_date_calculated = current_base_date
+        
+        # Estende a data calculada/soberana para a linha atual
+        if active_date_calculated:
+            df.at[i, 'src_col_0'] = active_date_calculated
+        
+        df.at[i, 'src_col_0_ffill'] = df.at[i, 'src_col_0']
+
+    # --- LIMPEZA DE LINHAS EM BRANCO E CORTE FINAL ---
+    df = df.dropna(how='all', subset=['src_col_2', 'src_col_3', 'src_col_4']).reset_index(drop=True)
+    idx_f = df['src_col_0'].last_valid_index()
+    if idx_f is not None:
+        df = df.iloc[:idx_f + 1].reset_index(drop=True)
+            
+    return df
+
+def _limpar_tabela_bruta_latam(df):
+    if df is None or df.empty: return pd.DataFrame()
+    x = df.copy().fillna("").astype(str)
+    x = x.map(lambda v: v.replace("\r", " ").replace("\n", " ").strip())
+    x.columns = list(range(len(x.columns)))
+    return x
+
+def _montar_layout_latam_por_posicao(df, return_auditoria=False):
+    def _serie(pos):
+        if pos < 0 or pos >= len(df.columns): return pd.Series([""] * len(df), index=df.index)
+        return df[df.columns[pos]].fillna("").astype(str)
+
+    cols = {f"src_col_{i}": _serie(i) for i in range(df.shape[1])}
+    auditoria = pd.DataFrame(cols)
+    
+    # Remoção da src_col_1
+    if "src_col_1" in auditoria.columns:
+        auditoria = auditoria.drop(columns=["src_col_1"])
+
+    auditoria["src_col_0_ffill"] = auditoria["src_col_0"]
+    auditoria = processar_datas_auditoria_latam(auditoria)
+
+    out = pd.DataFrame(index=auditoria.index)
+    
+    # Activity: src_col_4 (fallback src_col_2)
+    out["Activity"] = auditoria["src_col_4"].replace(['nan', 'None', ''], pd.NA).fillna(auditoria["src_col_2"])
+    
+    # Checkin/Start: data + HH:MM de src_col_7
+    out["Checkin"] = auditoria.apply(lambda r: _format_dt_regex(r["src_col_0"], r["src_col_7"]), axis=1)
+    out["Start"] = out["Checkin"]
+    
+    out["Dep"] = auditoria["src_col_7"].str[:3]
+    out["Arr"] = auditoria["src_col_8"].str[:3]
+    
+    # End/Checkout: data + HH:MM de src_col_9
+    out["End"] = auditoria.apply(lambda r: _format_dt_regex(r["src_col_0"], r["src_col_9"]), axis=1)
+    out["Checkout"] = out["End"]
+    
+    out["AcVer"] = auditoria["src_col_13"]
+    out["DD"], out["CAT"], out["Crew"] = "", auditoria["src_col_6"], ""
+
+    for c in CSV_COLUMNS:
+        auditoria[f"out_{c}"] = out[c]
+
+    return (out[CSV_COLUMNS], auditoria) if return_auditoria else out[CSV_COLUMNS]
+
+def main():
+    root = tk.Tk(); root.withdraw()
+    path_pdf = filedialog.askopenfilename(title="Selecione o PDF", filetypes=[("PDF", "*.pdf")])
+    root.destroy()
+    if not path_pdf: return
+
+    print(f"📖 Lendo PDF: {os.path.basename(path_pdf)}")
+    data = tabula.read_pdf(path_pdf, lattice=True, pages="all", multiple_tables=True, pandas_options={"header": None})
+    if not data: data = tabula.read_pdf(path_pdf, stream=True, pages="all", multiple_tables=True, pandas_options={"header": None})
+    
+    if not data:
+        print("❌ Erro: Não foi possível extrair tabelas.")
+        return
+
+    tabs = [_limpar_tabela_bruta_latam(t) for t in data if not t.empty]
+    m_cols = max(t.shape[1] for t in tabs)
+    df_u = pd.concat([t.reindex(columns=range(m_cols), fill_value="") for t in tabs], ignore_index=True)
+    df_u.columns = list(range(df_u.shape[1]))
+    
+    df_std, df_aud = _montar_layout_latam_por_posicao(df_u, return_auditoria=True)
+    
+    out_dir = Path(path_pdf).parent
+    if "Escalas_Executadas" in str(out_dir):
+        out_dir = Path(str(out_dir).replace("Escalas_Executadas", "Auditoria_Calculos"))
+    out_dir.mkdir(exist_ok=True, parents=True)
+    
+    ts = datetime.now().strftime("%d%m%Y_%H%M%S")
+    base = Path(path_pdf).stem
+    
+    df_std.to_csv(out_dir / f"{base}_PRIMEIRA_VERSAO_{ts}.csv", index=False, encoding="utf-8-sig")
+    
+    if OPENPYXL_AVAILABLE:
+        df_aud.to_excel(out_dir / f"{base}_AUDITORIA_{ts}.xlsx", index=False)
+        print(f"✅ Auditoria gerada: {base}_AUDITORIA_{ts}.xlsx")
+    else:
+        df_aud.to_csv(out_dir / f"{base}_AUDITORIA_{ts}.csv", index=False, encoding="utf-8-sig")
+    
+    print(f"✅ Processamento concluído.")
+
+if __name__ == "__main__":
+    main()

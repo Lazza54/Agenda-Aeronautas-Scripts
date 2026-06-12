@@ -1,0 +1,133 @@
+==== RELATÓRIO GERADO EM 2026-05-28 15:03:30 ====
+Análise 100% OFFLINE do período fornecido
+(Dados do aeronauta extraídos do nome do arquivo)
+
+==== RELATÓRIO DE CONFORMIDADE COMPLETO ====
+
+# Dados do aeronauta
+- Nome: Test
+- Matrícula: 
+- Base domiciliar: run
+- Função: 
+- Tipo de aeronave principal: JATO
+
+# Dados da empresa
+- Nome completo: schedule
+- Nome abreviado: schedule
+- Nome fantasia: schedule
+- RBAC: N/A
+- Tipo de operação: N/A
+- Gestão de fadiga: N/A
+- FRMS: OFF
+
+# Dados da escala
+- Arquivo fonte: test_run_schedule.csv
+- Período analisado: 01/08/2024 a 01/08/2024
+- Total de jornadas: 1
+
+# Cálculos objetivos por dia (todas as programações)
+
+# Cálculos objetivos (01/08/2024)
+- **Blocos:**
+  • Bloco 1:
+    - 123 LEG1
+    = **03:00**
+  • Bloco 2:
+    - 124 LEG2
+    = **02:30**
+- **Solo entre pernas:**
+  • VOO: -> = **03:30**
+- **Aps até Início:** -> = **N/A**
+- **Corte até Início do Repouso:** -> = **N/A**
+
+**Jornada do dia (apresentação->liberação):** 09:00
+**Repouso após a jornada:** N/A
+
+- Referência documental - FRMS: OFF
+
+**Limites aplicáveis ao horário de apresentação da jornada:**
+  [TÉCNICOS]
+  • TÉCNICOS | SIMPLES | Classe de acomodação: N/A: Jornada: 11:00 / Voo: 09:00 / Pousos máximo: 2
+  • TÉCNICOS | COMPOSTA: Classe 1 (Jornada 15:00 / Voo 13:30); Classe 2 (Jornada 14:00 / Voo 12:30); Classe 3 (Jornada 13:00 / Voo 11:30) / Pousos máximo: N/A
+  • TÉCNICOS | REVEZAMENTO: Classe 1 (Jornada 17:00 / Voo 15:30); Classe 2 (Jornada 16:00 / Voo 14:30); Classe 3 (Jornada 14:00 / Voo 12:30) / Pousos máximo: N/A
+  [RESERVA / SOBREAVISO]
+  • RESERVA | SIMPLES | Classe de acomodação: N/A: Jornada: N/A / Voo: N/A / Pousos máximo: N/A
+  • OBS RESERVA: Prevista a reserva por prazo superior a 3 (três) horas, o operador deve
+                assegurar ao tripulante acomodação para reserva, conforme estabelecido
+                no parágrafo 117.3(b)(2).
+  • SOBREAVISO | SIMPLES | Classe de acomodação: N/A: Jornada: 12:00 / Voo: N/A / Pousos
+    máximo: N/A / Conversão chamada: 1:3; Repouso pós-chamada: 12:00; Repouso sem
+    chamada: 10:00
+
+**Limites de repouso mínimo para a jornada executada:**
+- Jornada executada considerada: 09:00
+  • TRIPULAÇÃO: Repouso mínimo: N/A
+
+- OBS: Sem atividade de voo no dia (apenas jornada/folga). Verifique os limites de repouso/folga aplicáveis.
+
+------------------------------------------------------------------------------
+
+
+==============================================================================
+# RESULTADO DA AUDITORIA
+==============================================================================
+
+- Total de não conformidades apuradas: 1
+- Total de não conformidades exibidas: 1
+
+** Número Mensal de Folgas **
+  - Descrição: Folgas mensais insuficientes em 08/2024.
+    Referência: RBAC 117 A117.25(e)/(f)
+    Severidade: ALTA
+    Detalhes: Folgas no mês: 0. Mínimo exigido: 1. Grupo regulatório:
+    rbac_117_1_b_2_a_b_6.
+    Dados da(s) linha(s) relevante(s):
+      Activity | Id_Leg | Checkin | Start               | Dep | Arr | End                 | Checkout
+      ----------------------------------------------------------------------------------------------
+      VOO      | LEG1   | N/A     | 2024-08-01 06:00:00 | N/A | N/A | 2024-08-01 09:00:00 | N/A     
+      VOO      | LEG2   | N/A     | 2024-08-01 12:30:00 | N/A | N/A | 2024-08-01 15:00:00 | N/A     
+
+-----------------------------------------------------------
+
+# Sumário mensal do período auditado
+- Mês auditado: 08/2024
+
+1. FOLGAS
+1.1 Totais: 0 dia(s) de folga no mês.
+1.2 Semanais:
+  • 01/08 a 03/08: 0 folga(s).
+  • 04/08 a 10/08: 0 folga(s).
+  • 11/08 a 17/08: 0 folga(s).
+  • 18/08 a 24/08: 0 folga(s).
+  • 25/08 a 31/08: 0 folga(s).
+1.3 Finais de semana:
+  • 0 folgas de fim de semana no mês auditado.
+1.4 Agrupadas:
+  • Não houve folgas agrupadas (2 ou mais dias consecutivos).
+
+2. Verificação do sexto período (132 horas)
+  • Não houve sequência de 6 dias consecutivos de tarefas no mês auditado.
+
+3. Madrugadas consecutivas
+  • Total de jornadas com madrugada: 0.
+  • Não houve madrugadas consecutivas no mês auditado.
+
+4. Total das jornadas semanais e mensais
+  • 01/08 a 03/08: 09:00
+  • 04/08 a 10/08: 00:00
+  • 11/08 a 17/08: 00:00
+  • 18/08 a 24/08: 00:00
+  • 25/08 a 31/08: 00:00
+  • Total mensal de jornada: 09:00.
+  • OK: total mensal de jornada não excedeu 176:00.
+  • Não houve semana com jornada superior a 44:00.
+
+5. Total de horas voadas no período auditado
+  • 00:00
+
+# Informações adicionais
+- Este relatório é baseado nas informações fornecidas pelo aeronauta e na legislação vigente.
+- Para questões legais, recomenda-se consultar um advogado trabalhista especializado.
+- Este documento não constitui aconselhamento jurídico.
+
+# Fim do relatório

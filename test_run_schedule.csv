@@ -1,0 +1,3 @@
+Activity,Start,End,voo_numero,id_leg,tempo_corte,tempo_repouso
+Voo,2024-08-01 06:00:00,2024-08-01 09:00:00,123,LEG1,00:30:00,
+Voo,2024-08-01 12:30:00,2024-08-01 15:00:00,124,LEG2,00:20:00,

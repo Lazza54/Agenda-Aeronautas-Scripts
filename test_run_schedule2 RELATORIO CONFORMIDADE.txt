@@ -1,0 +1,167 @@
+==== RELATÓRIO GERADO EM 2026-05-28 18:44:15 ====
+Análise 100% OFFLINE do período fornecido
+(Dados do aeronauta extraídos do nome do arquivo)
+
+==== RELATÓRIO DE CONFORMIDADE COMPLETO ====
+
+# Dados do aeronauta
+- Nome: Test
+- Matrícula: 
+- Base domiciliar: run
+- Função: 
+- Tipo de aeronave principal: JATO
+
+# Dados da empresa
+- Nome completo: schedule2
+- Nome abreviado: schedule2
+- Nome fantasia: schedule2
+- RBAC: N/A
+- Tipo de operação: N/A
+- Gestão de fadiga: N/A
+- FRMS: OFF
+
+# Dados da escala
+- Arquivo fonte: test_run_schedule2.csv
+- Período analisado: 01/11/2017 a 02/11/2017
+- Total de jornadas: 2
+
+# Cálculos objetivos por dia (todas as programações)
+
+# Cálculos objetivos (01/11/2017)
+- **Blocos:**
+  • -I+-M+-M+-F AD5046->AD2852 - = **07:20**
+- **Solo entre pernas:**
+  • AD5046: -> = **00:00**
+- **Aps até Início:** -> = **00:00**
+- **Corte até Início do Repouso:** -> = **N/A**
+
+**Tempo de voo do dia:** 07:20
+**Jornada do dia (apresentação->liberação):** 03:28
+**Repouso após a jornada:** 01:39
+
+- Referência documental - FRMS: OFF
+
+**Limites aplicáveis ao horário de apresentação da jornada:**
+  [TÉCNICOS]
+  • TÉCNICOS | SIMPLES | Classe de acomodação: N/A: Jornada: 09:00 / Voo: 08:00 / Pousos máximo: 2
+  • TÉCNICOS | COMPOSTA: Classe 1 (Jornada 14:00 / Voo 12:30); Classe 2 (Jornada 13:00 / Voo 11:30); Classe 3 (Jornada 12:00 / Voo 10:30) / Pousos máximo: N/A
+  • TÉCNICOS | REVEZAMENTO: Classe 1 (Jornada 16:00 / Voo 14:30); Classe 2 (Jornada 14:00 / Voo 12:30); Classe 3 (Jornada 13:00 / Voo 11:30) / Pousos máximo: N/A
+  [RESERVA / SOBREAVISO]
+  • RESERVA | SIMPLES | Classe de acomodação: N/A: Jornada: N/A / Voo: N/A / Pousos máximo: N/A
+  • OBS RESERVA: Prevista a reserva por prazo superior a 3 (três) horas, o operador deve
+                assegurar ao tripulante acomodação para reserva, conforme estabelecido
+                no parágrafo 117.3(b)(2).
+  • SOBREAVISO | SIMPLES | Classe de acomodação: N/A: Jornada: 12:00 / Voo: N/A / Pousos
+    máximo: N/A / Conversão chamada: 1:3; Repouso pós-chamada: 12:00; Repouso sem
+    chamada: 10:00
+
+**Limites de repouso mínimo para a jornada executada:**
+- Jornada executada considerada: 03:28
+  • TRIPULAÇÃO: Repouso mínimo: N/A
+
+- OBS: Os valores de Tempo de voo, Jornada do dia e Repouso após a jornada foram reportados acima, você deve conferir com os limites disponibilizados.
+
+------------------------------------------------------------------------------
+
+# Cálculos objetivos (02/11/2017)
+- **Blocos:**
+  • -I+-M+-M+-F AD5046->AD2852 - = **07:20**
+- **Solo entre pernas:**
+  • AD2852: -> = **00:30**
+- **Aps até Início:** -> = **N/A**
+- **Corte até Início do Repouso:** -> = **00:00**
+
+**Tempo de voo do dia:** 07:20
+**Jornada do dia (apresentação->liberação):** 03:29
+**Repouso após a jornada:** N/A
+
+- Referência documental - FRMS: OFF
+
+**Limites aplicáveis ao horário de apresentação da jornada:**
+  [TÉCNICOS]
+  • TÉCNICOS | SIMPLES | Classe de acomodação: N/A: Jornada: 09:00 / Voo: 08:00 / Pousos máximo: 2
+  • TÉCNICOS | COMPOSTA: Classe 1 (Jornada 14:00 / Voo 12:30); Classe 2 (Jornada 13:00 / Voo 11:30); Classe 3 (Jornada 12:00 / Voo 10:30) / Pousos máximo: N/A
+  • TÉCNICOS | REVEZAMENTO: Classe 1 (Jornada 16:00 / Voo 14:30); Classe 2 (Jornada 14:00 / Voo 12:30); Classe 3 (Jornada 13:00 / Voo 11:30) / Pousos máximo: N/A
+  [RESERVA / SOBREAVISO]
+  • RESERVA | SIMPLES | Classe de acomodação: N/A: Jornada: N/A / Voo: N/A / Pousos máximo: N/A
+  • OBS RESERVA: Prevista a reserva por prazo superior a 3 (três) horas, o operador deve
+                assegurar ao tripulante acomodação para reserva, conforme estabelecido
+                no parágrafo 117.3(b)(2).
+  • SOBREAVISO | SIMPLES | Classe de acomodação: N/A: Jornada: 12:00 / Voo: N/A / Pousos
+    máximo: N/A / Conversão chamada: 1:3; Repouso pós-chamada: 12:00; Repouso sem
+    chamada: 10:00
+
+**Limites de repouso mínimo para a jornada executada:**
+- Jornada executada considerada: 03:29
+  • TRIPULAÇÃO: Repouso mínimo: N/A
+
+- OBS: Os valores de Tempo de voo, Jornada do dia e Repouso após a jornada foram reportados acima, você deve conferir com os limites disponibilizados.
+
+------------------------------------------------------------------------------
+
+
+==============================================================================
+# RESULTADO DA AUDITORIA
+==============================================================================
+
+- Total de não conformidades apuradas: 1
+- Total de não conformidades exibidas: 1
+
+** Número Mensal de Folgas **
+  - Descrição: Folgas mensais insuficientes em 11/2017.
+    Referência: RBAC 117 A117.25(e)/(f)
+    Severidade: ALTA
+    Detalhes: Folgas no mês: 0. Mínimo exigido: 1. Grupo regulatório:
+    rbac_117_1_b_2_a_b_6.
+    Dados da(s) linha(s) relevante(s):
+      Activity | Id_Leg   | Checkin | Start               | Dep | Arr | End                 | Checkout
+      ------------------------------------------------------------------------------------------------
+      VOO      | AD5046-I | N/A     | 2017-11-01 18:55:00 | N/A | N/A | 2017-11-01 19:48:00 | N/A     
+      VOO      | AD2852-M | N/A     | 2017-11-01 18:55:00 | N/A | N/A | 2017-11-01 22:23:00 | N/A     
+      VOO      | AD2852-M | N/A     | 2017-11-02 00:02:00 | N/A | N/A | 2017-11-02 01:43:00 | N/A     
+      VOO      | AD2852-F | N/A     | 2017-11-02 02:13:00 | N/A | N/A | 2017-11-02 03:31:00 | N/A     
+
+-----------------------------------------------------------
+
+# Sumário mensal do período auditado
+- Mês auditado: 11/2017
+
+1. FOLGAS
+1.1 Totais: 0 dia(s) de folga no mês.
+1.2 Semanais:
+  • 01/11 a 04/11: 0 folga(s).
+  • 05/11 a 11/11: 0 folga(s).
+  • 12/11 a 18/11: 0 folga(s).
+  • 19/11 a 25/11: 0 folga(s).
+  • 26/11 a 30/11: 0 folga(s).
+1.3 Finais de semana:
+  • 0 folgas de fim de semana no mês auditado.
+1.4 Agrupadas:
+  • Não houve folgas agrupadas (2 ou mais dias consecutivos).
+
+2. Verificação do sexto período (132 horas)
+  • Não houve sequência de 6 dias consecutivos de tarefas no mês auditado.
+
+3. Madrugadas consecutivas
+  • Total de jornadas com madrugada: 1.
+  • Não houve madrugadas consecutivas no mês auditado.
+
+4. Total das jornadas semanais e mensais
+  • 01/11 a 04/11: 06:57
+  • 05/11 a 11/11: 00:00
+  • 12/11 a 18/11: 00:00
+  • 19/11 a 25/11: 00:00
+  • 26/11 a 30/11: 00:00
+  • Total mensal de jornada: 06:57.
+  • OK: total mensal de jornada não excedeu 176:00.
+  • Não houve semana com jornada superior a 44:00.
+
+5. Total de horas voadas no período auditado
+  • 07:20
+
+# Informações adicionais
+- Este relatório é baseado nas informações fornecidas pelo aeronauta e na legislação vigente.
+- Para questões legais, recomenda-se consultar um advogado trabalhista especializado.
+- Este documento não constitui aconselhamento jurídico.
+
+# Fim do relatório
