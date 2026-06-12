@@ -75,9 +75,30 @@ def main():
         nome_up = file.name.upper()
         novo_nome = None
 
-        if "SUMARIO_HORAS" in nome_up:
-            tipo = file.stem.replace("SUMARIO_HORAS_", "")
-            novo_nome = f"SUMARIO_HORAS_{tipo}_{auditado['periodo']}_{timestamp}.pdf"
+        # Mapeamento de termos para extrair o tipo de sumário de forma padronizada
+        tipo_sumario = None
+        if "SUMARIO" in nome_up or "SUMÁRIO" in nome_up:
+            if "APRESENTA" in nome_up:
+                tipo_sumario = "APRESENTACAO"
+            elif "CORTE" in nome_up:
+                tipo_sumario = "TEMPO_CORTE"
+            elif "TREINAMENTO" in nome_up:
+                tipo_sumario = "TREINAMENTO"
+            elif "SOLO" in nome_up:
+                tipo_sumario = "EM_SOLO"
+            elif "RESERVA" in nome_up or "EXPLORAR" in nome_up:
+                tipo_sumario = "EXPLORAR_RESERVA"
+            elif "REPOUSO" in nome_up:
+                tipo_sumario = "REPOUSO_EXTRA" if "EXTRA" in nome_up else "REPOUSO"
+            elif "PLANTAO" in nome_up or "PLANTÃO" in nome_up:
+                tipo_sumario = "PLANTAO"
+            elif "OPERACAO" in nome_up or "OPERAÇÃO" in nome_up:
+                tipo_sumario = "OPERACAO"
+            elif "JORNADA" in nome_up:
+                tipo_sumario = "JORNADA"
+
+        if tipo_sumario:
+            novo_nome = f"{auditado['nome']}_{auditado['registro']}_SUMARIO_HORAS_{tipo_sumario}_{auditado['periodo']}_{timestamp}.pdf"
         elif "RELATORIO_CONFORMIDADE" in nome_up:
             novo_nome = f"RELATORIO_CONFORMIDADE_{auditado['nome']}_{auditado['registro']}_{auditado['periodo']}_{timestamp}.pdf"
             relatorio_path = csv_dir / novo_nome.replace(" ", "_")
