@@ -195,10 +195,24 @@ def main():
 
     # 3) Concatenar
     print("🔗 Concatenando páginas...")
-    df_merged = imported_data[0]
-    for df_to_concat in tqdm(imported_data[1:], desc="📑 Mesclando páginas", unit="pág"):
-        df_merged = pd.concat([df_merged, df_to_concat])
+    df_merged = pd.concat(imported_data, ignore_index=True)
     print(f"✅ {len(df_merged)} linhas totais após concatenação\n")
+
+    # Identificar a linha de cabeçalho e renomear as colunas
+    header_idx = None
+    for idx in range(min(10, len(df_merged))):
+        row_vals = df_merged.iloc[idx].astype(str).str.strip().str.upper().tolist()
+        if 'ACTIVITY' in row_vals:
+            header_idx = idx
+            break
+
+    if header_idx is not None:
+        new_columns = df_merged.iloc[header_idx].astype(str).str.strip().tolist()
+        new_columns = [col if col and col != 'nan' else f"Col_{i}" for i, col in enumerate(new_columns)]
+        df_merged.columns = new_columns
+        print(f"📢 Colunas renomeadas com base na linha {header_idx}: {df_merged.columns.tolist()}")
+    else:
+        print("⚠️ Atenção: Não foi encontrada a linha de cabeçalho contendo 'Activity'!")
 
     # 4) Pré-processamento (mesmo do seu script base)
     print("🧹 Limpando dados...")
@@ -210,11 +224,18 @@ def main():
         df_merged.replace(',', ' ', regex=True, inplace=True)
         pbar.update(1)
         
+        # Remove linhas de cabeçalho duplicadas que foram lidas como dados nas páginas seguintes
+        if 'Activity' in df_merged.columns:
+            df_merged = df_merged[df_merged['Activity'].astype(str).str.strip().str.upper() != 'ACTIVITY']
+        
         df_merged.dropna(how='all', inplace=True)
         pbar.update(1)
         
         if 'Activity' in df_merged.columns:
-            df_merged['Activity'].fillna('OCULTO', inplace=True)
+            # Garante que células vazias, com espaços, strings 'nan', 'None' ou '-' virem NaN para aplicar 'OCULTO'
+            df_merged['Activity'] = df_merged['Activity'].astype(str).str.strip()
+            df_merged['Activity'] = df_merged['Activity'].replace(['', 'nan', 'None', '-'], None)
+            df_merged['Activity'] = df_merged['Activity'].fillna('OCULTO')
         pbar.update(1)
         
         df_merged.dropna(thresh=3, inplace=True)

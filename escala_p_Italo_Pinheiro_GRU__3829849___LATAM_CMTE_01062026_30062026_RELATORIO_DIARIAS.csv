@@ -1,0 +1,30 @@
+﻿Data,Refeicao,Atividade,Localidade,Regiao,Valor,Moeda,Observacao
+01/06/2026,Café da Manhã,LA3391,PNZ,Nacional,27.49,R$,Devido em serviço/treinamento
+01/06/2026,Almoço,LA4661,JOI,Nacional,109.95,R$,Devido em serviço
+02/06/2026,Café da Manhã,CMA,GRU,Nacional,27.49,R$,Devido em serviço/treinamento
+02/06/2026,Almoço,CMA,GRU,Nacional,109.95,R$,Devido em serviço
+06/06/2026,Jantar,ASB,GRU,Nacional,109.95,R$,Devido em serviço
+07/06/2026,Almoço,HSB,GRU,Nacional,109.95,R$,Devido em serviço
+07/06/2026,Jantar,HSB,GRU,Nacional,109.95,R$,Devido em serviço
+08/06/2026,Almoço,LA3822,GRU,Nacional,109.95,R$,Devido em serviço
+08/06/2026,Jantar,LA3316,GRU,Nacional,109.95,R$,Devido em serviço
+09/06/2026,Jantar,LA3233,BEL,Nacional,109.95,R$,Devido em serviço
+10/06/2026,Jantar,LA3316,GRU,Nacional,109.95,R$,Devido em serviço
+10/06/2026,Ceia,LA3308,FLN,Nacional,109.95,R$,Elegível (Voo/Simulador)
+11/06/2026,Jantar,LA3567,MAO,Nacional,109.95,R$,Devido em serviço
+15/06/2026,Café da Manhã,HSB,CGH,Nacional,27.49,R$,Devido em serviço/treinamento
+15/06/2026,Almoço,HSB,CGH,Nacional,109.95,R$,Devido em serviço
+16/06/2026,Almoço,LA3822,GRU,Nacional,109.95,R$,Devido em serviço
+16/06/2026,Jantar,LA3316,GRU,Nacional,109.95,R$,Devido em serviço
+17/06/2026,Jantar,LA3809,SSA,Nacional,109.95,R$,Devido em serviço
+18/06/2026,Jantar,LA3567,MAO,Nacional,109.95,R$,Devido em serviço
+23/06/2026,Café da Manhã,HSB,CGH,Nacional,27.49,R$,Devido em serviço/treinamento
+23/06/2026,Almoço,HSB,CGH,Nacional,109.95,R$,Devido em serviço
+23/06/2026,Ceia,HSB,CGH,Nacional,0.0,R$,Não elegível em PLANTAO
+24/06/2026,Jantar,LA3131,GYN,Nacional,109.95,R$,Devido em serviço
+25/06/2026,Jantar,LA3291,CWB,Nacional,109.95,R$,Devido em serviço
+25/06/2026,Ceia,LA3426,GRU,Nacional,109.95,R$,Elegível (Voo/Simulador)
+26/06/2026,Jantar,LA3562,GRU,Nacional,109.95,R$,Devido em serviço
+26/06/2026,Ceia,LA3206,IGU,Nacional,109.95,R$,Elegível (Voo/Simulador)
+27/06/2026,Almoço,LA3469,MAO,Nacional,109.95,R$,Devido em serviço
+27/06/2026,Jantar,LA3790,GRU,Nacional,109.95,R$,Devido em serviço

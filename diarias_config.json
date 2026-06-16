@@ -1,0 +1,33 @@
+{
+  "nacional": {
+    "refeicao_principal": 109.95,
+    "cafe_manha": 27.49
+  },
+  "internacional": {
+    "america_sul_caribe": {
+      "moeda": "USD",
+      "refeicao_principal": 21.00,
+      "cafe_manha": 5.25
+    },
+    "america_norte_mexico": {
+      "moeda": "USD",
+      "refeicao_principal": 23.00,
+      "cafe_manha": 5.75
+    },
+    "europa": {
+      "moeda": "EUR",
+      "refeicao_principal": 23.00,
+      "cafe_manha": 5.75
+    },
+    "inglaterra": {
+      "moeda": "GBP",
+      "refeicao_principal": 23.00,
+      "cafe_manha": 5.75
+    },
+    "demais_paises": {
+      "moeda": "USD",
+      "refeicao_principal": 21.00,
+      "cafe_manha": 5.25
+    }
+  }
+}

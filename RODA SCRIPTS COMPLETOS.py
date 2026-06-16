@@ -621,7 +621,9 @@ class App:
         return books[0] if books else None
 
     def _encontrar_relatorios_conformidade(self, base_dir: Path) -> list[Path]:
-        rels = sorted(base_dir.glob("*RELATORIO CONFORMIDADE*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+        rels_espaco = list(base_dir.glob("*RELATORIO CONFORMIDADE*.txt"))
+        rels_sublinhado = list(base_dir.glob("*RELATORIO_CONFORMIDADE*.txt"))
+        rels = sorted(list(set(rels_espaco + rels_sublinhado)), key=lambda p: p.stat().st_mtime, reverse=True)
         return rels
 
     def _converter_txt_conformidade_para_pdf(self, txt_path: Path) -> Path | None:
@@ -816,11 +818,18 @@ class App:
 
             self._log(f"[SUPABASE STORAGE] Enviando '{caminho_arquivo.name}' para '{bucket_name}/{caminho_storage}'...")
             
+            ext = caminho_arquivo.suffix.lower()
+            content_type = "application/pdf"
+            if ext == ".csv":
+                content_type = "text/csv"
+            elif ext == ".txt":
+                content_type = "text/plain"
+
             with open(caminho_arquivo, "rb") as f:
                 cliente.storage.from_(bucket_name).upload(
                     path=caminho_storage,
                     file=f,
-                    file_options={"content-type": "application/pdf", "x-upsert": "true"}
+                    file_options={"content-type": content_type, "x-upsert": "true"}
                 )
             
             self._log(f"[SUPABASE STORAGE] ✓ Upload concluído com sucesso!")
@@ -828,6 +837,91 @@ class App:
         except Exception as e:
             self._log(f"[SUPABASE STORAGE] ✗ Erro no upload de '{caminho_arquivo.name}': {e}")
             return False
+
+    def _renomear_relatorios_e_sumarios(self, base_dir: Path):
+        """Renomeia fisicamente os relatórios de conformidade e sumários locais no disco para o formato padronizado."""
+        try:
+            nome_aero, re_aero = self._extrair_nome_e_re_do_pdf_escala()
+            nome_formatado = nome_aero.replace(" ", "_").strip() if nome_aero else "Aeronauta"
+            registro_formatado = re_aero.strip() if re_aero else ""
+            
+            # Encontra o CSV da quarta versão para pegar o período e timestamp de forma precisa
+            csv_path = self._encontrar_csv_passo4() or self._encontrar_csv_passo3() or self._encontrar_csv_passo2() or self._encontrar_csv_gerado()
+            periodo = ""
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if csv_path:
+                m_periodo = re.search(r"(\d{8}_\d{8})", csv_path.name)
+                if m_periodo:
+                    periodo = m_periodo.group(1)
+                m_ts = re.search(r"_VERSAO_(\d{8}_\d{6})", csv_path.name, re.IGNORECASE)
+                if m_ts:
+                    timestamp = m_ts.group(1)
+                    
+            periodo_suffix = f"_{periodo}" if periodo else ""
+            
+            # 1. Renomeia Relatório de Conformidade (TXT e PDF)
+            for ext in (".txt", ".pdf"):
+                for arq in base_dir.glob(f"*RELATORIO CONFORMIDADE*{ext}"):
+                    if "RELATORIO_CONFORMIDADE" in arq.name and nome_formatado in arq.name:
+                        continue
+                    
+                    if registro_formatado:
+                        novo_nome = f"{nome_formatado}_{registro_formatado}_RELATORIO_CONFORMIDADE{periodo_suffix}_{timestamp}{ext}"
+                    else:
+                        novo_nome = f"{nome_formatado}_RELATORIO_CONFORMIDADE{periodo_suffix}_{timestamp}{ext}"
+                    
+                    novo_nome = novo_nome.replace(" ", "_")
+                    novo_path = arq.parent / novo_nome
+                    try:
+                        arq.rename(novo_path)
+                        self._log(f"[PADRONIZAÇÃO] Arquivo renomeado: {arq.name} -> {novo_nome}")
+                    except Exception as e:
+                        self._log(f"[PADRONIZAÇÃO] ⚠️ Falha ao renomear {arq.name}: {e}")
+
+            # 2. Renomeia Sumários de Horas (.pdf)
+            for arq in base_dir.glob("*.pdf"):
+                nome_up = arq.name.upper()
+                if arq.name.startswith(nome_formatado) and "SUMARIO_HORAS" in nome_up:
+                    continue
+                
+                tipo_sumario = None
+                if "SUMARIO" in nome_up or "SUMÁRIO" in nome_up:
+                    if "APRESENTA" in nome_up:
+                        tipo_sumario = "APRESENTACAO"
+                    elif "CORTE" in nome_up:
+                        tipo_sumario = "TEMPO_CORTE"
+                    elif "TREINAMENTO" in nome_up:
+                        tipo_sumario = "TREINAMENTO"
+                    elif "SOLO" in nome_up:
+                        tipo_sumario = "EM_SOLO"
+                    elif "RESERVA" in nome_up or "EXPLORAR" in nome_up:
+                        tipo_sumario = "EXPLORAR_RESERVA"
+                    elif "REPOUSO" in nome_up:
+                        tipo_sumario = "REPOUSO_EXTRA" if "EXTRA" in nome_up else "REPOUSO"
+                    elif "PLANTAO" in nome_up or "PLANTÃO" in nome_up:
+                        tipo_sumario = "PLANTAO"
+                    elif "OPERACAO" in nome_up or "OPERAÇÃO" in nome_up:
+                        tipo_sumario = "OPERACAO"
+                    elif "JORNADA" in nome_up:
+                        tipo_sumario = "JORNADA"
+                    elif "DIARIA" in nome_up:
+                        tipo_sumario = "DIARIAS"
+                
+                if tipo_sumario:
+                    if registro_formatado:
+                        novo_nome = f"{nome_formatado}_{registro_formatado}_SUMARIO_HORAS_{tipo_sumario}{periodo_suffix}_{timestamp}.pdf"
+                    else:
+                        novo_nome = f"{nome_formatado}_SUMARIO_HORAS_{tipo_sumario}{periodo_suffix}_{timestamp}.pdf"
+                    
+                    novo_nome = novo_nome.replace(" ", "_")
+                    novo_path = arq.parent / novo_nome
+                    try:
+                        arq.rename(novo_path)
+                        self._log(f"[PADRONIZAÇÃO] Sumário renomeado: {arq.name} -> {novo_nome}")
+                    except Exception as e:
+                        self._log(f"[PADRONIZAÇÃO] ⚠️ Falha ao renomear sumário {arq.name}: {e}")
+        except Exception as e:
+            self._log(f"[PADRONIZAÇÃO] ⚠️ Erro geral na renomeação: {e}")
 
     def _enviar_relatorios_supabase(self, base_dir: Path, relatorios_anexados: list[Path]):
         """Coleta e envia o relatório de conformidade e os PDFs de SUMARIO para o Supabase."""
@@ -840,6 +934,11 @@ class App:
 
         # Arquivos de conformidade (convertidos que foram passados como anexos)
         arquivos_enviar = list(relatorios_anexados)
+
+        # Buscar o CSV da QUARTA_VERSAO para fazer upload
+        csv_quarta = self._encontrar_csv_passo4()
+        if csv_quarta and csv_quarta.exists():
+            arquivos_enviar.append(csv_quarta)
 
         # Buscar todos os PDFs que contêm SUMARIO ou SUMÁRIO no nome
         pdfs_sumario = list(base_dir.glob("*.pdf"))
@@ -1304,6 +1403,31 @@ class App:
                         self._log(f"[CONFORMIDADES] ✗ Falhou: {SCRIPT_RELATORIO_CONFORMIDADES_2}")
                         registrar_nao_executado(SCRIPT_RELATORIO_CONFORMIDADES_2, "falha na execução")
 
+            # ── RELATÓRIO DE DIÁRIAS ───────────────────────────────
+            self._log("-" * 60)
+            script_diarias = DIR_SCRIPTS / "RELATORIO DIARIAS.py"
+            if not script_diarias.exists():
+                self._log(f"[DIÁRIAS] ✗ Script não encontrado: {script_diarias.name}")
+                registrar_nao_executado("RELATORIO DIARIAS.py", f"script ausente: {script_diarias.name}")
+            else:
+                csv_diarias = self._encontrar_csv_passo4()
+                if not csv_diarias:
+                    self._log("[DIÁRIAS] ✗ CSV fonte não encontrado para execução.")
+                    registrar_nao_executado("RELATORIO DIARIAS.py", "CSV fonte não encontrado")
+                else:
+                    env_diarias = env.copy()
+                    env_diarias["AERO_ESCALA_CSV"] = str(csv_diarias)
+                    env_diarias["AERO_OUTPUT_DIR"] = self.var_dir.get()
+                    env_diarias["AERO_NO_POPUP"] = "1"
+                    self._log(f"[DIÁRIAS] CSV fonte: {csv_diarias.name}")
+                    self._log(f"[DIÁRIAS] Executando: RELATORIO DIARIAS.py")
+                    ok_diarias = self._executar_script(script_diarias, env_diarias)
+                    if ok_diarias:
+                        self._log(f"[DIÁRIAS] ✓ Concluído: RELATORIO DIARIAS.py")
+                    else:
+                        self._log(f"[DIÁRIAS] ✗ Falhou: RELATORIO DIARIAS.py")
+                        registrar_nao_executado("RELATORIO DIARIAS.py", "falha na execução")
+
             # ── MONTA BOOK GERAL ───────────────────────────────────
             self._log("-" * 60)
             script_book = DIR_SCRIPTS / SCRIPT_MONTA_BOOK
@@ -1319,6 +1443,7 @@ class App:
                 if ok_book:
                     self._log(f"[BOOK] ✓ Concluído: {SCRIPT_MONTA_BOOK}")
                     dir_trabalho = Path(self.var_dir.get())
+                    self._renomear_relatorios_e_sumarios(dir_trabalho)
                     arquivo_book = self._encontrar_book_final(dir_trabalho)
                     if arquivo_book:
                         self._log(f"[ENVIO] BOOK localizado para envio: {arquivo_book.name}")

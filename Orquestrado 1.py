@@ -34,10 +34,10 @@ def main():
     print('=== INICIANDO: PÓS-PROCESSAMENTO (ORQUESTRADO 1) ===')
 
     # ===== 4. BUSCA EXAUSTIVA PELO CSV =====
-    print("Buscando QUARTA_VERSAO.csv em todas as subpastas...")
+    print("Buscando QUARTA_VERSAO.csv...")
+    search_dir = Path(os.environ.get("AERO_AUTOMACAO_DIR", str(base_dir)))
     csv_path = None
-    # rglob("**/*") vasculha todas as profundidades de pastas
-    for f in base_dir.rglob("QUARTA_VERSAO.csv"):
+    for f in search_dir.rglob("QUARTA_VERSAO.csv"):
         csv_path = f
         break
 
@@ -96,11 +96,13 @@ def main():
                 tipo_sumario = "OPERACAO"
             elif "JORNADA" in nome_up:
                 tipo_sumario = "JORNADA"
+            elif "DIARIA" in nome_up:
+                tipo_sumario = "DIARIAS"
 
         if tipo_sumario:
             novo_nome = f"{auditado['nome']}_{auditado['registro']}_SUMARIO_HORAS_{tipo_sumario}_{auditado['periodo']}_{timestamp}.pdf"
         elif "RELATORIO_CONFORMIDADE" in nome_up:
-            novo_nome = f"RELATORIO_CONFORMIDADE_{auditado['nome']}_{auditado['registro']}_{auditado['periodo']}_{timestamp}.pdf"
+            novo_nome = f"{auditado['nome']}_{auditado['registro']}_RELATORIO_CONFORMIDADE_{auditado['periodo']}_{timestamp}.pdf"
             relatorio_path = csv_dir / novo_nome.replace(" ", "_")
         elif "BOOK" in nome_up:
             novo_nome = f"Book_{auditado['nome']}_{auditado['registro']}_{auditado['periodo']}_{timestamp}.pdf"
