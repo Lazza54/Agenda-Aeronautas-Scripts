@@ -924,7 +924,7 @@ class App:
             self._log(f"[PADRONIZAÇÃO] ⚠️ Erro geral na renomeação: {e}")
 
     def _enviar_relatorios_supabase(self, base_dir: Path, relatorios_anexados: list[Path]):
-        """Coleta e envia o relatório de conformidade e os PDFs de SUMARIO para o Supabase."""
+        """Coleta e envia o relatório de conformidade, sumários, book final e CSV de diárias para o Supabase."""
         self._log("-" * 60)
         self._log("[SUPABASE STORAGE] Iniciando upload de relatórios...")
 
@@ -939,6 +939,16 @@ class App:
         csv_quarta = self._encontrar_csv_passo4()
         if csv_quarta and csv_quarta.exists():
             arquivos_enviar.append(csv_quarta)
+
+        # Buscar o PDF do Book Final para fazer upload
+        book_final = self._encontrar_book_final(base_dir)
+        if book_final and book_final.exists():
+            arquivos_enviar.append(book_final)
+
+        # Buscar o CSV de diárias para fazer upload
+        for csv_diarias in base_dir.glob("*_RELATORIO_DIARIAS.csv"):
+            if csv_diarias.exists():
+                arquivos_enviar.append(csv_diarias)
 
         # Buscar todos os PDFs que contêm SUMARIO ou SUMÁRIO no nome
         pdfs_sumario = list(base_dir.glob("*.pdf"))
@@ -957,7 +967,7 @@ class App:
                     arquivos_unicos.append(arq)
 
         if not arquivos_unicos:
-            self._log("[SUPABASE STORAGE] ⚠️ Nenhum PDF de sumário ou conformidade encontrado para upload.")
+            self._log("[SUPABASE STORAGE] ⚠️ Nenhum arquivo encontrado para upload.")
             return
 
         self._log(f"[SUPABASE STORAGE] Total de {len(arquivos_unicos)} arquivo(s) localizado(s) para upload.")
@@ -1442,28 +1452,34 @@ class App:
                 ok_book = self._executar_script(script_book, env_book)
                 if ok_book:
                     self._log(f"[BOOK] ✓ Concluído: {SCRIPT_MONTA_BOOK}")
-                    dir_trabalho = Path(self.var_dir.get())
-                    self._renomear_relatorios_e_sumarios(dir_trabalho)
-                    arquivo_book = self._encontrar_book_final(dir_trabalho)
-                    if arquivo_book:
-                        self._log(f"[ENVIO] BOOK localizado para envio: {arquivo_book.name}")
-                        # Coleta e converte o PDF do relatório de conformidade
-                        anexos_email = self._coletar_anexos_email(dir_trabalho, arquivo_book)
-                        
-                        # Tenta enviar para o assinante
-                        emails = self._buscar_emails_aeronauta_supabase()
-                        if emails:
-                            self._enviar_book_por_email(emails, anexos_email)
-                        else:
-                            self._log("[ENVIO] ⚠️ Sem destinatários válidos. Envio por e-mail não realizado.")
-                        
-                        # Envia relatórios (conformidade e os que contêm SUMARIO) para o Supabase
-                        self._enviar_relatorios_supabase(dir_trabalho, anexos_email)
-                    else:
-                        self._log("[ENVIO] ⚠️ BOOK_FINAL não encontrado para envio.")
                 else:
                     self._log(f"[BOOK] ✗ Falhou: {SCRIPT_MONTA_BOOK}")
                     registrar_nao_executado(SCRIPT_MONTA_BOOK, "falha na execução")
+
+                # Pós-processamento e Uploads (independentemente do sucesso do Book)
+                dir_trabalho = Path(self.var_dir.get())
+                self._renomear_relatorios_e_sumarios(dir_trabalho)
+                
+                # Procura o arquivo do book final
+                arquivo_book = self._encontrar_book_final(dir_trabalho)
+                
+                # Coleta e converte o PDF do relatório de conformidade
+                anexos_email = self._coletar_anexos_email(dir_trabalho, arquivo_book if arquivo_book else dir_trabalho)
+                
+                if arquivo_book:
+                    self._log(f"[ENVIO] BOOK localizado para envio: {arquivo_book.name}")
+                    # Tenta enviar para o assinante
+                    emails = self._buscar_emails_aeronauta_supabase()
+                    if emails:
+                        self._enviar_book_por_email(emails, anexos_email)
+                    else:
+                        self._log("[ENVIO] ⚠️ Sem destinatários válidos. Envio por e-mail não realizado.")
+                else:
+                    self._log("[ENVIO] ⚠️ BOOK_FINAL não gerado. Envio do e-mail principal pulado.")
+                
+                # Envia todos os relatórios disponíveis (incluindo sumários e diárias) ao Supabase
+                self._enviar_relatorios_supabase(dir_trabalho, anexos_email)
+
 
             processamento_completo = True
 

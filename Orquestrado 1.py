@@ -24,8 +24,11 @@ def main():
         print(f"ERRO: Arquivo '{script_roda.name}' não encontrado em {base_dir}")
         return
 
-    # Executa o mestre e aguarda o fechamento da janela
-    subprocess.run([sys.executable, str(script_roda)], check=True, cwd=base_dir)
+    # Executa o mestre e aguarda o fechamento da janela (somente se não estiver em automação de fila)
+    if not os.environ.get("AERO_AUTOMACAO_DIR"):
+        subprocess.run([sys.executable, str(script_roda)], check=True, cwd=base_dir)
+    else:
+        print("Ignorando execução secundária do RODA SCRIPTS COMPLETOS.py (já executado pelo orquestrador da fila).")
     
     # ===== 2. TÉRMINO DO MESTRE =====
     print('=== FINALIZADO: RODA SCRIPTS COMPLETOS ===')
