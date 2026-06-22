@@ -1,9 +1,30 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """
 Gerador de Relatório de Diárias a Receber
 Sistema para calcular diárias nacionais e internacionais com base na CCT 2025/2026.
+
+Regulamentação CCT (Diárias de Alimentação):
+-------------------------------------------
+2.3. Diárias
+As diárias de alimentação, quando pagas diretamente ao aeronauta, no território nacional, serão
+fixadas, a partir de 01 de dezembro de 2025, em R$ 109,95 (cento e nove reais e noventa e cinco
+centavos), por refeição principal (almoço, jantar ou ceia).
+
+Parágrafo Primeiro: A diária de alimentação relativa ao café da manhã será igual a 25% (vinte e
+cinco por cento) do valor estabelecido para as refeições principais, não sendo devido seu
+pagamento quando estiver incluído na conta do hotel;
+
+Parágrafo Segundo: As diárias de alimentação serão pagas sempre que o aeronauta estiver
+prestando serviço ou à disposição da empresa, no todo ou em parte, nos seguintes períodos:
+I.   Café da manhã, das 05:00 às 08:00 horas inclusive;
+II.  Almoço, das 11:00 às 13:00 horas inclusive;
+III. Jantar, das 19:00 às 20:00 horas inclusive;
+IV.  Ceia, entre 00:00 e 01:00 hora inclusive;
+
+Exceções Regulamentares (Decisões Judiciais):
+--------------------------------------------
+Decisão TST (Sobreaviso):
+Por decisão unânime da Seção Especializada em Dissídios Coletivos (SDC) do TST, publicada em 
+27 de outubro de 2021, foi pacificado que não devem ser pagas diárias aos aeronautas em sobreaviso.
 """
 
 import pandas as pd
@@ -50,6 +71,7 @@ class RelatorioDiarias:
         self.config = {}
         self.aeroportos_br = set()
         self.atividades_pagas_latam = set()
+        self.atividades_sobreaviso_latam = set()
         self.folgas_azul = set()
         self.tipos_plantao_azul = set()
         self.tipos_reserva_azul = set()
@@ -100,7 +122,19 @@ class RelatorioDiarias:
                                     val = item.get(key)
                                     if val:
                                         self.atividades_pagas_latam.add(str(val).strip().upper())
+                            
+                            # Identifica se a atividade da LATAM é de sobreaviso
+                            desc = str(item.get("descricao_textual") or "").upper()
+                            resumo = str(item.get("descricao_resumida") or "").upper()
+                            cod_ams = str(item.get("codigo_ams") or "").upper()
+                            if "SOBRE AVISO" in desc or "SOBREAVISO" in desc or "SOBRE AVISO" in resumo or "SOBREAVISO" in resumo or "SOBRE AVISO" in cod_ams or "SOBREAVISO" in cod_ams:
+                                for key in ("codigo_iflight_neo", "codigo_ams"):
+                                    val = item.get(key)
+                                    if val:
+                                        self.atividades_sobreaviso_latam.add(str(val).strip().upper())
+                                        
                     print(f"✅ Carregadas {len(self.atividades_pagas_latam)} chaves de atividades pagas LATAM.")
+                    print(f"✅ Carregadas {len(self.atividades_sobreaviso_latam)} chaves de sobreaviso LATAM.")
                 except Exception as e:
                     print(f"⚠️ Erro ao ler AtividadesEscalaLATAM.json: {e}")
         else:
@@ -211,18 +245,48 @@ class RelatorioDiarias:
         try:
             arquivo = os.path.basename(self.arquivo_csv)
             nome_sem_ext = os.path.splitext(arquivo)[0]
+            
+            # Tenta extrair o período do nome do arquivo (ex: 01022026_01032026)
+            m_per = re.search(r"(\d{8})_(\d{8})", nome_sem_ext)
+            if m_per:
+                p_inicio = m_per.group(1)
+                p_fim = m_per.group(2)
+                self.periodo = f"{p_inicio[:2]}/{p_inicio[2:4]}/{p_inicio[4:]} a {p_fim[:2]}/{p_fim[2:4]}/{p_fim[4:]}"
+            
+            # Tenta extrair de forma robusta via regex
+            m_dados = re.search(r"^escala_[pe]_(.+?)_([A-Z]{3,4})__+(\d+)?", nome_sem_ext, re.IGNORECASE)
+            if m_dados:
+                self.nome_aeronauta = m_dados.group(1).replace('_', ' ').strip().upper()
+                self.base = m_dados.group(2).upper()
+                self.re = m_dados.group(3) or ""
+                return
+
+            # Fallback (caso a regex nao dê match)
             if nome_sem_ext.startswith('escala_p_') or nome_sem_ext.startswith('escala_e_'):
                 nome_sem_pref = nome_sem_ext[9:]
                 partes = nome_sem_pref.split('_')
-                if len(partes) >= 6:
-                    partes_sem_datas = partes[:-2]
-                    self.nome_aeronauta = f"{partes_sem_datas[0]} {partes_sem_datas[1]}".upper()
-                    self.base = partes_sem_datas[2].upper()
-                    self.re = ""
-                    for i in range(3, len(partes_sem_datas)):
-                        if partes_sem_datas[i] and partes_sem_datas[i].strip():
-                            self.re = partes_sem_datas[i].strip()
+                if len(partes) >= 3:
+                    # Encontra o índice da base operacional (geralmente uma sigla em maiusculas)
+                    idx_base = -1
+                    for idx, parte in enumerate(partes):
+                        if parte.isupper() and len(parte) in (3, 4):
+                            idx_base = idx
                             break
+                    
+                    if idx_base != -1:
+                        partes_nome = partes[:idx_base]
+                        self.nome_aeronauta = " ".join(partes_nome).replace('_', ' ').strip().upper()
+                        self.base = partes[idx_base].upper()
+                        
+                        # Tenta achar o RE depois da base
+                        self.re = ""
+                        for i in range(idx_base + 1, len(partes)):
+                            if partes[i] and partes[i].isdigit():
+                                self.re = partes[i]
+                                break
+                    else:
+                        # Fallback mais simples caso nao ache a base
+                        self.nome_aeronauta = f"{partes[0]} {partes[1]}".upper()
         except Exception as e:
             print(f"Aviso ao extrair dados do aeronauta: {e}")
 
@@ -231,8 +295,8 @@ class RelatorioDiarias:
         try:
             self.df = pd.read_csv(self.arquivo_csv)
             
-            # Extrai período do primeiro registro se houver
-            if 'periodo' in self.df.columns and len(self.df) > 0:
+            # Extrai período do primeiro registro se houver e self.periodo estiver vazio
+            if not self.periodo and 'periodo' in self.df.columns and len(self.df) > 0:
                 self.periodo = str(self.df.iloc[0]['periodo']).strip()
             
             # Filtra atividades válidas (onde pelo menos um tempo está preenchido)
@@ -250,6 +314,15 @@ class RelatorioDiarias:
             print(f"❌ Erro ao ler e filtrar o CSV: {e}")
             self.df = pd.DataFrame()
 
+    def _is_sobreaviso_ou_plantao(self, codigo) -> bool:
+        if pd.isna(codigo):
+            return False
+        c = str(codigo).strip().upper()
+        if self.is_latam:
+            return c in self.atividades_sobreaviso_latam
+        else:
+            return c in self.tipos_plantao_azul
+
     def _obter_tipo_atividade(self, codigo):
         if pd.isna(codigo):
             return 'OUTRO'
@@ -258,6 +331,10 @@ class RelatorioDiarias:
         # 1. Repouso (sempre tem precedência)
         if any(k in c for k in ['REPOUSO', 'REP', 'HOTEL', 'DESCANSO']):
             return 'REPOUSO'
+            
+        # 1b. Sobreaviso/Plantão (excluído de diárias por decisão do TST de 27/10/2021)
+        if self._is_sobreaviso_ou_plantao(c) or any(k in c for k in ['SOBREAVISO', 'SBA', 'HSB']):
+            return 'SOBREAVISO'
             
         # 2. Folgas e Licenças baseadas nas consultas de configuração
         if self.is_latam:
@@ -384,7 +461,7 @@ class RelatorioDiarias:
 
 
                 # Se houver serviço ativo ou repouso fora da base, não descartamos a jornada
-                if not (tipo_ativ == 'FOLGA' or (tipo_ativ == 'REPOUSO' and regiao == 'Nacional' and str(localidade).upper() == self.base)):
+                if not (tipo_ativ == 'FOLGA' or tipo_ativ == 'SOBREAVISO' or (tipo_ativ == 'REPOUSO' and regiao == 'Nacional' and str(localidade).upper() == self.base)):
                     todas_descartadas = False
                     break
 
@@ -448,6 +525,11 @@ class RelatorioDiarias:
                         # Extrai dados da etapa representativa
                         atividade = etapa_ref['Activity']
                         tipo_ativ = self._obter_tipo_atividade(atividade)
+                        
+                        # Adiciona o asterisco "*" no nome da atividade se for sobreaviso/plantao
+                        atividade_display = atividade
+                        if tipo_ativ == 'SOBREAVISO':
+                            atividade_display = f"{atividade}*"
 
 
 
@@ -469,8 +551,13 @@ class RelatorioDiarias:
                         valor, moeda = self._obter_valores_diaria(regiao, ref_key)
                         obs = "Devido em serviço"
                         
+                        # Regras especiais de elegibilidade
+                        if tipo_ativ == 'SOBREAVISO':
+                            valor = 0.0
+                            obs = "Não devido em sobreaviso (Decisão TST de 27/10/2021)"
+                        
                         # Regra específica do Café da Manhã (servido no hotel no repouso)
-                        if ref_key == 'cafe':
+                        elif ref_key == 'cafe':
                             if tipo_ativ == 'REPOUSO':
                                 valor = 0.0
                                 obs = "Incluso no hotel (não devido)"
@@ -490,7 +577,7 @@ class RelatorioDiarias:
                         diarias_calculadas.append({
                             'Data': dia.strftime('%d/%m/%Y'),
                             'Refeicao': ref_nome,
-                            'Atividade': atividade,
+                            'Atividade': atividade_display,
                             'Localidade': localidade,
                             'Regiao': 'Nacional' if regiao == 'Nacional' else regiao.replace('_', ' ').title(),
                             'Valor': valor,
@@ -555,6 +642,29 @@ class RelatorioDiarias:
             f.write("-" * 110 + "\n")
             for linha in detalhado_linhas:
                 f.write(linha + "\n")
+                
+            f.write("\n" + "=" * 110 + "\n")
+            f.write("                                             BASE LEGAL\n")
+            f.write("=" * 110 + "\n\n")
+            f.write("1. Convenção Coletiva de Trabalho (Diárias de Alimentação - Cláusula 2.3):\n")
+            f.write("As diárias de alimentação, quando pagas diretamente ao aeronauta, no território nacional, serão\n")
+            f.write("fixadas, a partir de 01 de dezembro de 2025, em R$ 109,95 por refeição principal (almoço, jantar ou ceia).\n\n")
+            f.write("Parágrafo Primeiro: A diária de alimentação relativa ao café da manhã será igual a 25% (vinte e cinco por cento)\n")
+            f.write("do valor estabelecido para as refeições principais, não sendo devido seu pagamento quando estiver incluído\n")
+            f.write("na conta do hotel.\n\n")
+            f.write("Parágrafo Segundo: As diárias de alimentação serão pagas sempre que o aeronauta estiver prestando serviço ou\n")
+            f.write("à disposição da empresa, no todo ou em parte, nos seguintes períodos:\n")
+            f.write("  I.   Café da manhã, das 05:00 às 08:00 horas inclusive;\n")
+            f.write("  II.  Almoço, das 11:00 às 13:00 horas inclusive;\n")
+            f.write("  III. Jantar, das 19:00 às 20:00 horas inclusive;\n")
+            f.write("  IV.  Ceia, entre 00:00 e 01:00 hora inclusive;\n\n")
+            f.write("2. Exceção de Pagamento - Decisão TST (Sobreaviso):\n")
+            f.write("Por decisão unânime da Seção Especializada em Dissídios Coletivos (SDC) do TST, publicada em 27 de outubro de 2021,\n")
+            f.write("foi pacificado que não devem ser pagas diárias aos aeronautas em sobreaviso. No relatório acima, as atividades\n")
+            f.write("identificadas como sobreaviso ou plantão equivalente estão assinaladas com um asterisco '*' no nome da atividade\n")
+            f.write("e possuem valor zerado.\n\n")
+            f.write("NOTA:\n")
+            f.write("Quando encontrar '*' na atividade, você deve considerar se o pagamento da referida diária é devida ou não de acordo com os textos colocados aqui.\n")
                 
         print(f"✅ Relatório TXT gerado com sucesso: {output_path}")
         return diarias
@@ -712,6 +822,58 @@ class RelatorioDiarias:
         
         story.append(t_detalhe)
         
+        # Seção Base Legal no PDF
+        story.append(Spacer(1, 20))
+        
+        style_base_legal_title = ParagraphStyle(
+            name='BaseLegalTitle',
+            parent=styles['Normal'],
+            fontName='Helvetica-Bold',
+            fontSize=10,
+            textColor=colors.HexColor('#0f2a4a'),
+            spaceAfter=8
+        )
+        
+        style_base_legal_text = ParagraphStyle(
+            name='BaseLegalText',
+            parent=styles['Normal'],
+            fontName='Helvetica',
+            fontSize=8,
+            textColor=colors.HexColor('#444444'),
+            leading=11,
+            spaceAfter=6
+        )
+
+        base_legal_story = []
+        base_legal_story.append(Paragraph("<b>BASE LEGAL E REGULAMENTAR:</b>", style_base_legal_title))
+        
+        cct_text = (
+            "<b>Convenção Coletiva de Trabalho (Cláusula 2.3 - Diárias):</b><br/>"
+            "As diárias de alimentação, quando pagas diretamente ao aeronauta, no território nacional, serão "
+            "fixadas, a partir de 01 de dezembro de 2025, em R$ 109,95 por refeição principal (almoço, jantar ou ceia).<br/>"
+            "• <i>Parágrafo Primeiro:</i> A diária de alimentação relativa ao café da manhã será igual a 25% (vinte e cinco por cento) "
+            "do valor estabelecido para as refeições principais, não sendo devido seu pagamento quando estiver incluído na conta do hotel.<br/>"
+            "• <i>Parágrafo Segundo:</i> As diárias de alimentação serão pagas sempre que o aeronauta estiver prestando serviço ou "
+            "à disposição da empresa, nos seguintes períodos: I. Café da manhã, das 05:00 às 08:00 horas inclusive; II. Almoço, das 11:00 "
+            "às 13:00 horas inclusive; III. Jantar, das 19:00 às 20:00 horas inclusive; IV. Ceia, entre 00:00 e 01:00 hora inclusive."
+        )
+        base_legal_story.append(Paragraph(cct_text, style_base_legal_text))
+        
+        tst_text = (
+            "<b>Exceção de Pagamento - Decisão TST (Sobreaviso):</b><br/>"
+            "Por decisão unânime da Seção Especializada em Dissídios Coletivos (SDC) do TST, publicada em 27 de outubro de 2021, "
+            "foi pacificado que não devem ser pagas diárias aos aeronautas em sobreaviso (identificados com asterisco '*' no relatório)."
+        )
+        base_legal_story.append(Paragraph(tst_text, style_base_legal_text))
+        
+        nota_text = (
+            "<b>NOTA:</b><br/>"
+            "Quando encontrar '*' na atividade, você deve considerar se o pagamento da referida diária é devida ou não de acordo com os textos colocados aqui."
+        )
+        base_legal_story.append(Paragraph(nota_text, style_base_legal_text))
+        
+        story.append(KeepTogether(base_legal_story))
+        
         try:
             doc.build(story)
             print(f"✅ Relatório PDF gerado com sucesso: {output_path}")
@@ -779,7 +941,7 @@ def main():
     nome_limpo = re.sub(r'_(PRIMEIRA|SEGUNDA|TERCEIRA|QUARTA)_VERSAO.*$', '', nome_base, flags=re.IGNORECASE)
     
     output_txt = os.path.join(diretorio, f"{nome_limpo}_RELATORIO_DIARIAS.txt")
-    output_pdf = os.path.join(diretorio, f"{nome_limpo}_SUMARIO_HORAS_DIARIAS.pdf")
+    output_pdf = os.path.join(diretorio, f"{nome_limpo}_SUMARIO_DIARIAS.pdf")
     output_csv = os.path.join(diretorio, f"{nome_limpo}_RELATORIO_DIARIAS.csv")
     
     # Processa e gera os relatórios
