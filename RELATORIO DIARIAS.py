@@ -295,6 +295,27 @@ class RelatorioDiarias:
         try:
             self.df = pd.read_csv(self.arquivo_csv)
             
+            # Normalizar nomes de colunas para Title Case se vierem com capitalização diferente (como checkin, checkout, etc.)
+            mapa_colunas = {
+                'checkin': 'Checkin',
+                'check-in': 'Checkin',
+                'checkout': 'Checkout',
+                'check-out': 'Checkout',
+                'start': 'Start',
+                'end': 'End',
+                'activity': 'Activity',
+                'atividade': 'Activity',
+                'dep': 'Dep',
+                'arr': 'Arr'
+            }
+            novos_nomes = {}
+            for col in self.df.columns:
+                col_normalizada = str(col).strip().lower()
+                if col_normalizada in mapa_colunas:
+                    novos_nomes[col] = mapa_colunas[col_normalizada]
+            if novos_nomes:
+                self.df = self.df.rename(columns=novos_nomes)
+            
             # Extrai período do primeiro registro se houver e self.periodo estiver vazio
             if not self.periodo and 'periodo' in self.df.columns and len(self.df) > 0:
                 self.periodo = str(self.df.iloc[0]['periodo']).strip()
@@ -425,6 +446,13 @@ class RelatorioDiarias:
     def calcular_diarias(self):
         """Processa a escala calculando todas as diárias devidas."""
         if self.df is None or self.df.empty:
+            return []
+
+        # Validação defensiva de colunas obrigatórias
+        colunas_obrigatorias = ['Checkin', 'Checkout', 'Start', 'End']
+        colunas_faltantes = [c for c in colunas_obrigatorias if c not in self.df.columns]
+        if colunas_faltantes:
+            print(f"❌ Erro: Colunas obrigatórias ausentes no arquivo CSV: {colunas_faltantes}")
             return []
 
         diarias_calculadas = []

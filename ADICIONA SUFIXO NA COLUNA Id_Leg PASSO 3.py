@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from datetime import datetime
+import re
 
 MODO_AUTOMATICO = bool(os.environ.get("AERO_ESCALA_CSV")) or os.environ.get("AERO_NO_POPUP") == "1"
 
@@ -90,6 +91,48 @@ def ler_csv_robusto(path: Path) -> pd.DataFrame:
 # =========================
 # Lógica de Id_Leg por grupo
 # =========================
+MESES_MAP = {
+    'JAN': '01', 'FEV': '02', 'MAR': '03', 'ABR': '04', 'MAI': '05', 'JUN': '06',
+    'JUL': '07', 'AGO': '08', 'SET': '09', 'OUT': '10', 'NOV': '11', 'DEZ': '12'
+}
+
+def formatar_data_pt(val):
+    if pd.isna(val):
+        return pd.NA
+    
+    val_str = str(val).strip().upper()
+    val_str = val_str.rstrip('-').strip()
+    
+    if not val_str or val_str in ['NAN', 'NONE', '-', '—']:
+        return pd.NA
+        
+    # Match ddMMMaa hh:mm ou ddMMMaaaa hh:mm (ex: 02AGO21 08:10)
+    match = re.match(r"^(\d{1,2})([A-Z]{3})(\d{2,4})\s+(\d{2}):(\d{2})", val_str)
+    if match:
+        dia = match.group(1).zfill(2)
+        mes_sigla = match.group(2)
+        ano_str = match.group(3)
+        hora = match.group(4)
+        minuto = match.group(5)
+        
+        mes = MESES_MAP.get(mes_sigla)
+        if not mes:
+            return val_str
+            
+        if len(ano_str) == 2:
+            ano = "20" + ano_str
+        else:
+            ano = ano_str
+            
+        return f"{dia}/{mes}/{ano} {hora}:{minuto}"
+        
+    return val_str
+
+def converter_para_datetime(series: pd.Series) -> pd.Series:
+    """Limpa e converte uma série de strings de data/hora brasileira para datetime."""
+    limpo = series.apply(formatar_data_pt)
+    return pd.to_datetime(limpo, dayfirst=True, errors="coerce")
+
 def preencher_id_leg_por_checkin(df: pd.DataFrame) -> pd.DataFrame:
     if "Checkin" not in df.columns:
         raise KeyError("Coluna 'Checkin' não encontrada no CSV.")
@@ -102,27 +145,79 @@ def preencher_id_leg_por_checkin(df: pd.DataFrame) -> pd.DataFrame:
     else:
         out["Id_Leg"] = ""
 
-    # Agrupa por Checkin preservando a ordem original
-    chk = out["Checkin"].astype(str)
+    # Convertemos temporariamente para datetime para realizar a ordenação e cálculos de intervalo
+    temp = df.copy()
+    temp["_orig_idx"] = temp.index
+    
+    # Tratamento de colunas datetime com conversão robusta e limpeza de traços
+    temp["Checkin_dt"] = converter_para_datetime(temp["Checkin"])
+    temp["Checkout_dt"] = converter_para_datetime(temp["Checkout"])
+    
+    # Caso a coluna Start não exista, usamos o Checkin_dt como fallback para ordenação
+    if "Start" in temp.columns:
+        temp["Start_dt"] = converter_para_datetime(temp["Start"])
+    else:
+        temp["Start_dt"] = temp["Checkin_dt"]
 
-    # groupby ignora NaN; trataremos NaN separadamente como linhas isoladas
-    groups = chk.groupby(chk, sort=False).groups  # dict: valor -> Index
-    for key, idx in groups.items():
-        # idx pode vir como Index; garantir lista em ordem pela posição original
-        idx_list = list(sorted(idx))
-        n = len(idx_list)
-        if n == 0:
+    # Filtramos apenas linhas que contêm Checkin e Checkout válidos para o agrupamento
+    valid_mask = temp["Checkin_dt"].notna() & temp["Checkout_dt"].notna()
+    df_valid = temp[valid_mask].copy()
+
+    if df_valid.empty:
+        return out
+
+    # Ordenamos cronologicamente pela data de início para garantir cálculo correto do descanso
+    df_valid = df_valid.sort_values(by="Start_dt").reset_index(drop=True)
+
+    # Identificamos os grupos de jornada baseado no descanso >= 12 horas
+    grupos = []
+    grupo_id = 0
+    
+    for idx, row in df_valid.iterrows():
+        if idx == 0:
+            grupos.append(grupo_id)
             continue
-        if key in ("", "nan", "NaN", "None") or key.strip() == "":
-            # sem valor real -> deixa em branco
-            continue
+            
+        row_anterior = df_valid.iloc[idx - 1]
+        
+        # Duração da atividade anterior e atual em minutos (Checkout - Checkin)
+        duracao_anterior = (row_anterior["Checkout_dt"] - row_anterior["Checkin_dt"]).total_seconds() / 60.0
+        duracao_atual = (row["Checkout_dt"] - row["Checkin_dt"]).total_seconds() / 60.0
+        
+        # Verificação de Dep = Arr para a atividade anterior e atual (ignora maiúsculas/minúsculas e espaços)
+        dep_arr_anterior = str(row_anterior.get("Dep", "")).strip().upper() == str(row_anterior.get("Arr", "")).strip().upper() if pd.notna(row_anterior.get("Dep")) and pd.notna(row_anterior.get("Arr")) else False
+        dep_arr_atual = str(row.get("Dep", "")).strip().upper() == str(row.get("Arr", "")).strip().upper() if pd.notna(row.get("Dep")) and pd.notna(row.get("Arr")) else False
+        
+        # Intervalo de descanso em horas entre o Checkout anterior e o Checkin atual
+        diff = row["Checkin_dt"] - row_anterior["Checkout_dt"]
+        diff_hours = diff.total_seconds() / 3600.0
+        
+        # Novo grupo inicia se:
+        # 1. Descanso >= 12 horas
+        # 2. Atividade anterior durou >= 23h55 (1435 min) E tem Dep = Arr
+        # 3. Atividade atual dura >= 23h55 (1435 min) E tem Dep = Arr
+        check_anterior = duracao_anterior >= 1435.0 and dep_arr_anterior
+        check_atual = duracao_atual >= 1435.0 and dep_arr_atual
+        
+        if diff_hours >= 12.0 or check_anterior or check_atual:
+            grupo_id += 1
+            
+        grupos.append(grupo_id)
+        
+    df_valid["_grupo_jornada"] = grupos
+
+    # Preenchemos a coluna Id_Leg no DataFrame original com base nos grupos identificados
+    for gid, grupo_df in df_valid.groupby("_grupo_jornada"):
+        orig_indices = grupo_df["_orig_idx"].tolist()
+        n = len(orig_indices)
+        
         if n == 1:
-            out.loc[idx_list[0], "Id_Leg"] = "-IF"
+            out.loc[orig_indices[0], "Id_Leg"] = "-IF"
         else:
-            out.loc[idx_list[0], "Id_Leg"] = "-I"
+            out.loc[orig_indices[0], "Id_Leg"] = "-I"
             if n > 2:
-                out.loc[idx_list[1:-1], "Id_Leg"] = "-M"
-            out.loc[idx_list[-1], "Id_Leg"] = "-F"
+                out.loc[orig_indices[1:-1], "Id_Leg"] = "-M"
+            out.loc[orig_indices[-1], "Id_Leg"] = "-F"
 
     return out
 
