@@ -10,9 +10,21 @@ import sys
 import time
 import subprocess
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from SUPABASE_CONEXAO_DEV import obter_config, criar_cliente
+
+# Garante que a saída do console utilize UTF-8 para suportar caracteres especiais (como emojis de check e erro)
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 def log(msg: str):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
@@ -88,8 +100,8 @@ def process_job(supabase, job):
     try:
         supabase.table("upload_jobs").update({
             "status": "processando",
-            "started_at": datetime.utcnow().isoformat(),
-            "locked_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "locked_at": datetime.now(timezone.utc).isoformat(),
             "locked_by": "local_server_orchestrator"
         }).eq("id", job_id).execute()
         log("✓ Status da tarefa updated para 'processando'.")
@@ -135,15 +147,29 @@ def process_job(supabase, job):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         script_roda = os.path.join(script_dir, "RODA SCRIPTS COMPLETOS.py")
         
+        # Detecta se há um ambiente virtual (.venv) para executar os subprocessos
+        python_exec = sys.executable
+        venv_dir = Path(script_dir) / ".venv"
+        if os.name == "nt":
+            venv_python = venv_dir / "Scripts" / "python.exe"
+        else:
+            venv_python = venv_dir / "bin" / "python"
+            
+        if venv_python.exists():
+            python_exec = str(venv_python.resolve())
+            log(f"Usando interpretador Python do ambiente virtual: {python_exec}")
+        else:
+            log(f"Ambiente virtual não localizado em {venv_dir}. Usando interpretador atual: {python_exec}")
+
         log("Disparando RODA SCRIPTS COMPLETOS.py...")
         env = os.environ.copy()
         env["AERO_AUTOMACAO_DIR"] = auditoria_dir
         env["AERO_NO_POPUP"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
 
-        # Chama o subprocesso
+        # Chama o subprocesso usando o interpretador do ambiente virtual se disponível
         proc_roda = subprocess.run(
-            [sys.executable, script_roda],
+            [python_exec, script_roda],
             env=env,
             cwd=script_dir,
             capture_output=True,
@@ -181,7 +207,7 @@ def process_job(supabase, job):
             supabase.table("upload_jobs").update({
                 "status": "erro",
                 "error_message": err_msg,
-                "finished_at": datetime.utcnow().isoformat()
+                "finished_at": datetime.now(timezone.utc).isoformat()
             }).eq("id", job_id).execute()
             log("✓ Status de erro gravado na fila.")
         except Exception as update_err:
