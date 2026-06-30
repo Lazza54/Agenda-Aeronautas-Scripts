@@ -15,34 +15,60 @@ export default function FlightSchedule({
 }: FlightScheduleProps) {
   const [filterType, setFilterType] = useState<'ALL' | 'CURRENT'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedDay, setSelectedDay] = useState<string | null>('29'); // "29" matches screenshot default selection
+
+  // 1. Extrai todos os dias únicos ordenados que possuem atividades/voos na escala
+  const activeDays = useMemo(() => {
+    if (!flights || flights.length === 0) return [];
+    const daysSet = new Set<string>();
+    flights.forEach((f) => {
+      if (f.date && f.date.includes('/')) {
+        const day = f.date.split('/')[0];
+        daysSet.add(day);
+      }
+    });
+    return Array.from(daysSet).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+  }, [flights]);
+
+  // Define o dia selecionado por padrão como o primeiro dia ativo
+  const [selectedDayState, setSelectedDayState] = useState<string | null>(null);
+  
+  const selectedDay = useMemo(() => {
+    if (selectedDayState) return selectedDayState;
+    if (activeDays.length > 0) return activeDays[0];
+    return null;
+  }, [selectedDayState, activeDays]);
+
+  const setSelectedDay = (day: string | null) => {
+    setSelectedDayState(day);
+  };
 
   // Days list matching DOM 01 to TER 31
-  const daysOfWeek = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB'];
   const dates = useMemo(() => {
     const list = [];
-    // Generating dates for August/September 2021 (e.g. 1st to 31st)
-    for (let i = 1; i <= 31; i++) {
-      const dayStr = i.toString().padStart(2, '0');
-      // Just some fixed week matching for August 2021 where 1st is Sunday (DOM)
-      const weekIndex = (i - 1) % 7;
+    const daysOfWeek = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB'];
+    
+    activeDays.forEach((dayStr) => {
+      const flight = flights.find((f) => f.date && f.date.split('/')[0] === dayStr);
+      let dayName = '---';
+      if (flight && flight.date) {
+        try {
+          const p = flight.date.split('/');
+          const dateObj = new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0]));
+          dayName = daysOfWeek[dateObj.getDay()];
+        } catch (e) {}
+      }
       list.push({
         dayNum: dayStr,
-        dayName: daysOfWeek[weekIndex]
+        dayName: dayName
       });
-    }
+    });
     return list;
-  }, []);
+  }, [activeDays, flights]);
 
   // Filter flights
   const filteredFlights = useMemo(() => {
     return flights.filter((flight) => {
-      // 1. Filter by ALL vs CURRENT
-      if (filterType === 'CURRENT' && flight.status !== 'active') {
-        return false;
-      }
-      
-      // 2. Filter by search query
+      // 1. Filter by search query
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
         const matchesQuery =
@@ -53,9 +79,13 @@ export default function FlightSchedule({
         if (!matchesQuery) return false;
       }
 
-      // 3. Filter by selected day on horizontal timeline (if selected)
-      if (selectedDay) {
-        // e.g., flight.date is "29/08/2021", extract the first 2 chars
+      // 2. Se filterType for ALL, mostra todos os voos (ignora o dia selecionado)
+      if (filterType === 'ALL') {
+        return true;
+      }
+
+      // 3. Se filterType for CURRENT, filtra pelo selectedDay
+      if (filterType === 'CURRENT' && selectedDay) {
         const flightDay = flight.date.split('/')[0];
         if (flightDay !== selectedDay) return false;
       }
@@ -101,23 +131,27 @@ export default function FlightSchedule({
     setShowAddModal(false);
   };
 
-  // Quick preset navigators (FIRST, LAST, NEXT, END)
-  const handleTimelineNav = (type: 'FIRST' | 'LAST' | 'NEXT' | 'END') => {
+  // Quick preset navigators (PRIMEIRO, ANTERIOR, PRÓXIMO, ÚLTIMO)
+  const handleTimelineNav = (type: 'FIRST' | 'PREV' | 'NEXT' | 'LAST') => {
+    if (activeDays.length === 0) return;
+    const currentIndex = selectedDay ? activeDays.indexOf(selectedDay) : -1;
+
     if (type === 'FIRST') {
-      setSelectedDay('01');
+      setSelectedDay(activeDays[0]);
     } else if (type === 'LAST') {
-      setSelectedDay('31');
-    } else if (type === 'NEXT') {
-      if (selectedDay) {
-        const num = parseInt(selectedDay, 10);
-        if (num < 31) {
-          setSelectedDay((num + 1).toString().padStart(2, '0'));
-        }
+      setSelectedDay(activeDays[activeDays.length - 1]);
+    } else if (type === 'PREV') {
+      if (currentIndex > 0) {
+        setSelectedDay(activeDays[currentIndex - 1]);
       } else {
-        setSelectedDay('01');
+        setSelectedDay(activeDays[0]);
       }
-    } else if (type === 'END') {
-      setSelectedDay('31');
+    } else if (type === 'NEXT') {
+      if (currentIndex >= 0 && currentIndex < activeDays.length - 1) {
+        setSelectedDay(activeDays[currentIndex + 1]);
+      } else {
+        setSelectedDay(activeDays[activeDays.length - 1]);
+      }
     }
   };
 
@@ -147,236 +181,81 @@ export default function FlightSchedule({
 
   return (
     <div className="space-y-4">
-      {/* Search & Selection Controls Card */}
-      <div className="bg-surface-card/60 backdrop-blur-md rounded border border-outline-tactical/30 p-md space-y-md">
-        
-        {/* Toggle and Add Flight Buttons */}
-        <div className="flex justify-between items-center">
+      {/* Toggle Buttons (TODOS vs CHAVES DE VOO) */}
+      <div className="flex justify-end items-center">
+        <div className="flex bg-surface-low border border-outline-tactical rounded p-0.5 gap-1 shadow-md">
           <button
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1 bg-primary text-on-primary font-mono text-[11px] font-bold tracking-wider hover:bg-primary-hover active:scale-95 transition-all rounded uppercase"
+            onClick={() => {
+              setFilterType('ALL');
+            }}
+            className={`px-3 py-1 rounded font-mono text-[10px] transition-all font-bold cursor-pointer uppercase ${
+              filterType === 'ALL'
+                ? 'bg-primary text-on-primary shadow-sm'
+                : 'text-text-muted hover:text-primary'
+            }`}
           >
-            <Plus size={12} /> NOVO VOO
+            TODOS
           </button>
-
-          <div className="flex bg-surface-low border border-outline-tactical rounded p-0.5 gap-1">
-            <button
-              onClick={() => {
-                setFilterType('ALL');
-                setSelectedDay(null); // Show all days
-              }}
-              className={`px-3 py-1 rounded font-mono text-[10px] transition-all font-bold ${
-                filterType === 'ALL' && selectedDay === null
-                  ? 'bg-primary text-on-primary'
-                  : 'text-text-muted hover:text-primary'
-              }`}
-            >
-              TODOS
-            </button>
-            <button
-              onClick={() => {
-                setFilterType('CURRENT');
-                setSelectedDay(null);
-              }}
-              className={`px-3 py-1 rounded font-mono text-[10px] transition-all font-bold ${
-                filterType === 'CURRENT'
-                  ? 'bg-primary text-on-primary'
-                  : 'text-text-muted hover:text-primary'
-              }`}
-            >
-              ATIVOS
-            </button>
-          </div>
-        </div>
-
-        {/* Search Bar Input */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-surface-low border border-outline-tactical/60 rounded py-2 pl-10 pr-4 font-mono text-xs text-primary focus:border-primary focus:outline-none transition-all placeholder:text-text-muted/40"
-            placeholder="Search flights (e.g. VCP, SSA, AD4372)..."
-            type="text"
-          />
-        </div>
-
-        {/* Horizontal Calendar Timeline */}
-        <div className="space-y-2">
-          <div className="flex justify-between items-center text-[10px] font-mono text-text-muted">
-            <span>SELECIONAR DATA</span>
-            {selectedDay ? (
-              <button onClick={() => setSelectedDay(null)} className="text-primary hover:underline">
-                [LIMPAR DATA]
-              </button>
-            ) : (
-              <span>TODAS AS DATAS</span>
-            )}
-          </div>
-          
-          <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-            {dates.map((date) => {
-              const isSelected = selectedDay === date.dayNum;
-              return (
-                <button
-                  key={date.dayNum}
-                  onClick={() => setSelectedDay(date.dayNum)}
-                  className={`flex-shrink-0 w-11 h-11 rounded border flex flex-col items-center justify-center transition-all active:scale-95 cursor-pointer ${
-                    isSelected
-                      ? 'border-primary bg-primary/15 glow-gold'
-                      : 'border-outline-tactical/30 bg-surface-low hover:border-primary/40 hover:bg-surface-container/50'
-                  }`}
-                >
-                  <span className={`text-[9px] font-mono leading-none ${isSelected ? 'text-primary' : 'text-text-muted'}`}>
-                    {date.dayName}
-                  </span>
-                  <span className={`text-sm font-bold mt-0.5 ${isSelected ? 'text-primary' : 'text-text-bright'}`}>
-                    {date.dayNum}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Quick Nav Button bar */}
-          <div className="grid grid-cols-4 gap-1 pt-1">
-            <button
-              onClick={() => handleTimelineNav('FIRST')}
-              className="bg-surface-low border border-outline-tactical/30 py-2 font-mono text-[9px] text-text-muted hover:text-primary hover:border-primary/40 active:scale-95 transition-all uppercase"
-            >
-              « FIRST
-            </button>
-            <button
-              onClick={() => handleTimelineNav('LAST')}
-              className="bg-surface-low border border-outline-tactical/30 py-2 font-mono text-[9px] text-text-muted hover:text-primary hover:border-primary/40 active:scale-95 transition-all uppercase"
-            >
-              &lt; LAST
-            </button>
-            <button
-              onClick={() => handleTimelineNav('NEXT')}
-              className="bg-surface-low border border-outline-tactical/30 py-2 font-mono text-[9px] text-text-muted hover:text-primary hover:border-primary/40 active:scale-95 transition-all uppercase"
-            >
-              NEXT &gt;
-            </button>
-            <button
-              onClick={() => handleTimelineNav('END')}
-              className="bg-surface-low border border-outline-tactical/30 py-2 font-mono text-[9px] text-text-muted hover:text-primary hover:border-primary/40 active:scale-95 transition-all uppercase"
-            >
-              END »
-            </button>
-          </div>
-        </div>
-
-        {/* Current Date Key Banner */}
-        <div className="flex items-center justify-between bg-surface-low border border-outline-tactical/40 p-2 rounded">
-          <span className="font-mono text-[11px] text-primary tracking-wider uppercase">
-            CHAVE {selectedDay || '01'}/31 — {selectedDay || '01'}/08/2021 → {selectedDay ? (parseInt(selectedDay) + 1).toString().padStart(2, '0') : '31'}/08/2021
-          </span>
+          <button
+            onClick={() => {
+              setFilterType('CURRENT');
+              if (activeDays.length > 0) {
+                setSelectedDay(activeDays[0]);
+              }
+            }}
+            className={`px-3 py-1 rounded font-mono text-[10px] transition-all font-bold cursor-pointer uppercase ${
+              filterType === 'CURRENT'
+                ? 'bg-primary text-on-primary shadow-sm'
+                : 'text-text-muted hover:text-primary'
+            }`}
+          >
+            CHAVES DE VOO
+          </button>
         </div>
       </div>
 
-      {/* Quick Add Flight Dialog Box */}
-      {showAddModal && (
-        <form onSubmit={handleCreateFlight} className="bg-surface-card border border-primary/40 p-md rounded-lg space-y-md glow-gold-active">
-          <div className="border-b border-outline-tactical/60 pb-2">
-            <h3 className="font-mono text-xs font-bold text-primary uppercase">CADASTRAR ETAPA DE VOO</h3>
-          </div>
-          <div className="grid grid-cols-2 gap-sm">
-            <div>
-              <label className="block text-[10px] font-mono text-text-muted mb-1">CÓDIGO VOO</label>
-              <input
-                type="text"
-                placeholder="AD4372"
-                required
-                value={newId}
-                onChange={(e) => setNewId(e.target.value)}
-                className="w-full bg-bg-dark border border-outline-tactical rounded p-2 text-xs text-text-bright focus:border-primary focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-mono text-text-muted mb-1">DATA</label>
-              <input
-                type="text"
-                placeholder="29/08/2021"
-                required
-                value={newDate}
-                onChange={(e) => setNewDate(e.target.value)}
-                className="w-full bg-bg-dark border border-outline-tactical rounded p-2 text-xs text-text-bright focus:border-primary focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-mono text-text-muted mb-1">ORIGEM</label>
-              <input
-                type="text"
-                placeholder="VCP"
-                required
-                value={newFrom}
-                onChange={(e) => setNewFrom(e.target.value)}
-                className="w-full bg-bg-dark border border-outline-tactical rounded p-2 text-xs text-text-bright focus:border-primary focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-mono text-text-muted mb-1">DESTINO</label>
-              <input
-                type="text"
-                placeholder="SSA"
-                required
-                value={newTo}
-                onChange={(e) => setNewTo(e.target.value)}
-                className="w-full bg-bg-dark border border-outline-tactical rounded p-2 text-xs text-text-bright focus:border-primary focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-mono text-text-muted mb-1">APRESENTAÇÃO</label>
-              <input
-                type="text"
-                placeholder="22:40"
-                value={newPres}
-                onChange={(e) => setNewPres(e.target.value)}
-                className="w-full bg-bg-dark border border-outline-tactical rounded p-2 text-xs text-text-bright focus:border-primary focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-mono text-text-muted mb-1">DECOLAGEM</label>
-              <input
-                type="text"
-                placeholder="23:40"
-                value={newDep}
-                onChange={(e) => setNewDep(e.target.value)}
-                className="w-full bg-bg-dark border border-outline-tactical rounded p-2 text-xs text-text-bright focus:border-primary focus:outline-none"
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-[10px] font-mono text-text-muted mb-1">POUSO / CHEGADA</label>
-              <input
-                type="text"
-                placeholder="02:00"
-                value={newArr}
-                onChange={(e) => setNewArr(e.target.value)}
-                className="w-full bg-bg-dark border border-outline-tactical rounded p-2 text-xs text-text-bright focus:border-primary focus:outline-none"
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-2 border-t border-outline-tactical/30">
-            <button
-              type="button"
-              onClick={() => setShowAddModal(false)}
-              className="text-[11px] font-mono px-3 py-1.5 bg-surface-low hover:bg-zinc-800 text-text-muted border border-outline-tactical rounded"
-            >
-              CANCELAR
-            </button>
-            <button
-              type="submit"
-              className="text-[11px] font-mono px-3 py-1.5 bg-primary text-on-primary hover:bg-primary-hover font-bold rounded"
-            >
-              SALVAR VOO
-            </button>
-          </div>
-        </form>
-      )}
-
       {/* Flight Schedule List/Table */}
-      <div className="bg-surface-card border border-outline-tactical/40 rounded overflow-hidden">
+      <div className="bg-surface-card border border-outline-tactical/40 rounded overflow-hidden shadow-lg">
+        
+        {/* Painel de Navegação de Chaves de Voo integrado ao quadro */}
+        {filterType === 'CURRENT' && selectedDay && (
+          <div className="p-md bg-surface-low border-b border-outline-tactical/50 flex flex-col sm:flex-row justify-between items-center gap-md">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+              <span className="font-mono text-xs text-text-bright font-bold uppercase tracking-wider">
+                CHAVE DE VOO ATIVA — DIA {selectedDay}
+              </span>
+            </div>
+            
+            {/* Botões rápidos integrados */}
+            <div className="flex bg-surface-card border border-outline-tactical rounded p-0.5 gap-1 font-mono text-[9px] font-bold">
+              <button
+                onClick={() => handleTimelineNav('FIRST')}
+                className="px-2.5 py-1 text-text-muted hover:text-primary transition-colors cursor-pointer uppercase"
+              >
+                PRIMEIRO
+              </button>
+              <button
+                onClick={() => handleTimelineNav('PREV')}
+                className="px-2.5 py-1 text-text-muted hover:text-primary transition-colors border-l border-outline-tactical/40 cursor-pointer uppercase"
+              >
+                ANTERIOR
+              </button>
+              <button
+                onClick={() => handleTimelineNav('NEXT')}
+                className="px-2.5 py-1 text-text-muted hover:text-primary transition-colors border-l border-outline-tactical/40 cursor-pointer uppercase"
+              >
+                PRÓXIMO
+              </button>
+              <button
+                onClick={() => handleTimelineNav('LAST')}
+                className="px-2.5 py-1 text-text-muted hover:text-primary transition-colors border-l border-outline-tactical/40 cursor-pointer uppercase"
+              >
+                ÚLTIMO
+              </button>
+            </div>
+          </div>
+        )}
         {/* Desktop Table View */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full border-collapse">

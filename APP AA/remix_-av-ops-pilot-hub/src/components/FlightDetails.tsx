@@ -49,6 +49,13 @@ export default function FlightDetails({
   const [hotelCheckIn, setHotelCheckIn] = useState(lodging.checkIn);
   const [hotelReservation, setHotelReservation] = useState(lodging.reservationCode);
 
+  React.useEffect(() => {
+    setHotelName(lodging.hotelName);
+    setHotelAddress(lodging.address);
+    setHotelCheckIn(lodging.checkIn);
+    setHotelReservation(lodging.reservationCode);
+  }, [lodging]);
+
   // Attachment upload simulation
   const [planoUploadName, setPlanoUploadName] = useState<string | null>(null);
   const [realizadoUploadName, setRealizadoUploadName] = useState<string | null>(null);
@@ -103,17 +110,18 @@ export default function FlightDetails({
     setShowEditLodgingForm(false);
   };
 
-  // Simulation of document snap
-  const triggerCameraMock = (type: 'plano' | 'realizado') => {
-    const randId = Math.floor(Math.random() * 9000) + 1000;
-    const mockFilename = type === 'plano' 
-      ? `PLANO_VOO_AV_${randId}_SIGNED.PNG` 
-      : `LOG_REALIZADO_AV_${randId}_FINAL.PNG`;
-    
-    if (type === 'plano') {
-      setPlanoUploadName(mockFilename);
-    } else {
-      setRealizadoUploadName(mockFilename);
+  // Simulation of document snap using native camera
+  const handlePlanoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setPlanoUploadName(file.name || 'plano_voo.jpg');
+    }
+  };
+
+  const handleRealizadoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setRealizadoUploadName(file.name || 'fms_tela.jpg');
     }
   };
 
@@ -319,61 +327,9 @@ export default function FlightDetails({
           <div className="flex justify-between items-center mb-md">
             <div className="flex items-center gap-2">
               <Users size={16} className="text-primary" />
-              <h4 className="font-sans text-sm font-bold text-text-bright uppercase">Equipagem</h4>
+              <h4 className="font-sans text-sm font-bold text-text-bright uppercase">Tripulantes</h4>
             </div>
-            <button
-              onClick={() => setShowAddCrewForm(!showAddCrewForm)}
-              className="flex items-center gap-1 text-[11px] font-mono text-primary hover:text-primary-hover active:scale-95 transition-transform"
-            >
-              <Plus size={14} /> ADICIONAR
-            </button>
           </div>
-
-          {showAddCrewForm && (
-            <form onSubmit={handleAddCrew} className="mb-md p-sm bg-surface-low border border-outline-tactical rounded space-y-sm">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
-                <div>
-                  <label className="block text-[10px] font-mono text-text-muted mb-1">NOME DO TRIPULANTE</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Cap. Carlos Mendes"
-                    value={newCrewName}
-                    onChange={(e) => setNewCrewName(e.target.value)}
-                    className="w-full bg-bg-dark border border-outline-tactical rounded p-2 text-xs text-text-bright focus:border-primary focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-mono text-text-muted mb-1">FUNÇÃO / CARGO</label>
-                  <select
-                    value={newCrewRole}
-                    onChange={(e) => setNewCrewRole(e.target.value)}
-                    className="w-full bg-bg-dark border border-outline-tactical rounded p-2 text-xs text-text-bright focus:border-primary focus:outline-none"
-                  >
-                    <option value="COMANDANTE">COMANDANTE</option>
-                    <option value="PRIMEIRO OFICIAL">PRIMEIRO OFICIAL</option>
-                    <option value="COMISSÁRIO">COMISSÁRIO</option>
-                    <option value="MECÂNICO">MECÂNICO DE VOO</option>
-                  </select>
-                </div>
-              </div>
-              <div className="flex justify-end gap-2 pt-2 border-t border-outline-tactical/20">
-                <button
-                  type="button"
-                  onClick={() => setShowAddCrewForm(false)}
-                  className="text-[10px] font-mono px-2 py-1 bg-surface-container hover:bg-zinc-800 text-text-muted rounded"
-                >
-                  CANCELAR
-                </button>
-                <button
-                  type="submit"
-                  className="text-[10px] font-mono px-2 py-1 bg-primary text-on-primary font-bold rounded"
-                >
-                  GRAVAR
-                </button>
-              </div>
-            </form>
-          )}
 
           <div className="space-y-2">
             {crew.map((member) => (
@@ -384,16 +340,6 @@ export default function FlightDetails({
                 <div>
                   <p className="font-sans text-xs text-text-bright font-bold">{member.name}</p>
                   <p className="font-mono text-[9px] text-text-muted uppercase tracking-wider">{member.role}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleRemoveCrew(member.id)}
-                    className="p-1 text-text-muted hover:text-expiring-red hover:bg-red-500/10 rounded transition-colors active:scale-95"
-                    title="Remover Tripulante"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                  <MoreVertical size={14} className="text-text-muted" />
                 </div>
               </div>
             ))}
@@ -503,29 +449,47 @@ export default function FlightDetails({
 
       {/* Upload/Scan triggers */}
       <div className="mt-md flex flex-col gap-sm">
+        {/* Hidden inputs to trigger camera */}
+        <input
+          id="plano-camera-input"
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handlePlanoFileChange}
+          className="hidden"
+        />
+        <input
+          id="realizado-camera-input"
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleRealizadoFileChange}
+          className="hidden"
+        />
+
         <button
           type="button"
-          onClick={() => triggerCameraMock('plano')}
+          onClick={() => document.getElementById('plano-camera-input')?.click()}
           className="border border-primary text-primary hover:bg-primary/5 active:scale-95 text-xs font-mono font-bold py-3 flex items-center justify-center gap-2 rounded transition-all uppercase tracking-wider select-none cursor-pointer"
         >
           <Camera size={14} /> DADOS PLANO DO VOO
         </button>
         {planoUploadName && (
           <div className="text-center font-mono text-[10px] text-valid-green bg-green-500/5 p-1 border border-green-500/20 rounded">
-            ✓ FILE ATTACHED: {planoUploadName}
+            ✓ FOTO ANEXADA: {planoUploadName}
           </div>
         )}
 
         <button
           type="button"
-          onClick={() => triggerCameraMock('realizado')}
+          onClick={() => document.getElementById('realizado-camera-input')?.click()}
           className="border border-primary text-primary hover:bg-primary/5 active:scale-95 text-xs font-mono font-bold py-3 flex items-center justify-center gap-2 rounded transition-all uppercase tracking-wider select-none cursor-pointer"
         >
-          <Camera size={14} /> DADOS DO VOO REALIZADO
+          <Camera size={14} /> DADOS DO VOO REALIZADOS
         </button>
         {realizadoUploadName && (
           <div className="text-center font-mono text-[10px] text-valid-green bg-green-500/5 p-1 border border-green-500/20 rounded">
-            ✓ FILE ATTACHED: {realizadoUploadName}
+            ✓ FOTO ANEXADA: {realizadoUploadName}
           </div>
         )}
       </div>
@@ -534,7 +498,18 @@ export default function FlightDetails({
       <div className="mt-md">
         <button
           type="button"
-          onClick={onConfirmOperation}
+          onClick={() => {
+            onConfirmOperation();
+            if (selectedFlight) {
+              const opData = {
+                flightId: selectedFlight.id,
+                planoImage: planoUploadName,
+                realizadoImage: realizadoUploadName,
+                confirmedAt: new Date().toLocaleTimeString('pt-BR')
+              };
+              localStorage.setItem(`av_ops_flight_log_${selectedFlight.id}`, JSON.stringify(opData));
+            }
+          }}
           className={`w-full py-4 font-mono font-black text-sm tracking-widest text-on-primary bg-primary hover:bg-primary-hover active:scale-[0.98] transition-all rounded shadow-lg glow-gold uppercase cursor-pointer select-none`}
         >
           CONFIRMAR OPERAÇÃO

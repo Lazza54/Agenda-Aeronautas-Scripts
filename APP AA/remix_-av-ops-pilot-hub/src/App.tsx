@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   TabType,
   Flight,
@@ -52,8 +52,126 @@ import {
   saveFlightsToSupabase,
   getSupabaseSQLScript,
   SubscriptionStatus,
-  QuartaVersaoConfig
+  QuartaVersaoConfig,
+  authenticatePilot,
+  fetchReportsFromStorage,
+  parseCSV,
+  PilotProfile
 } from './lib/supabase';
+
+// Helper para garantir formato brasileiro DD/MM/AAAA
+function ensureBRDate(dateStr: string): string {
+  if (!dateStr || dateStr === '—') return '—';
+  const match = dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    return `${match[3]}/${match[2]}/${match[1]}`;
+  }
+  return dateStr;
+}
+
+// Helper para converter a escala obtida via CSV do storage do Supabase no formato real do App
+function mapCSVFlights(parsedFlights: any[]): Flight[] {
+  return parsedFlights.map((item: any, idx: number) => {
+    // 1. Formata a data de YYYY-MM-DD para DD/MM/YYYY
+    let dateStr = '—';
+    const rawDate = item.Checkin || item.Start || item.data || item.Data;
+    if (rawDate && rawDate.length >= 10) {
+      const parts = rawDate.substring(0, 10).split('-');
+      if (parts.length === 3) {
+        dateStr = `${parts[2]}/${parts[1]}/${parts[0]}`;
+      } else if (rawDate.includes('/')) {
+        dateStr = rawDate.substring(0, 10);
+      }
+    }
+
+    // 2. Extrai horários HH:mm
+    let depTime = '—';
+    const rawStart = item.Start || item.partida || item.Partida;
+    if (rawStart && rawStart.includes(' ')) {
+      depTime = rawStart.split(' ')[1].substring(0, 5);
+    } else if (rawStart) {
+      depTime = rawStart.substring(0, 5);
+    }
+
+    let arrTime = '—';
+    const rawEnd = item.End || item.chegada || item.Chegada;
+    if (rawEnd && rawEnd.includes(' ')) {
+      arrTime = rawEnd.split(' ')[1].substring(0, 5);
+    } else if (rawEnd) {
+      arrTime = rawEnd.substring(0, 5);
+    }
+
+    let presTime = '—';
+    const rawCheckin = item.Checkin || item.apresentacao || item.Apresentacao;
+    if (rawCheckin && rawCheckin.includes(' ')) {
+      presTime = rawCheckin.split(' ')[1].substring(0, 5);
+    } else if (rawCheckin) {
+      presTime = rawCheckin.substring(0, 5);
+    }
+
+    // 3. Formata as durações "X days HH:MM:SS" -> "HH:MM"
+    const formatDuration = (val: string) => {
+      if (!val) return '00:00';
+      const cleanVal = val.trim();
+      if (cleanVal.includes('days')) {
+        const match = cleanVal.match(/(-?\d+)\s+days\s+([-+]?\d{1,2}):(\d{2})/);
+        if (match) {
+          const days = parseInt(match[1], 10);
+          const rawHrs = parseInt(match[2].replace('+', ''), 10);
+          const mins = parseInt(match[3], 10);
+          
+          let totalMins = (days * 24 * 60) + (rawHrs * 60) + mins;
+          if (totalMins < 0) totalMins = 0;
+          
+          const hrs = Math.floor(totalMins / 60).toString().padStart(2, '0');
+          const m = (totalMins % 60).toString().padStart(2, '0');
+          return `${hrs}:${m}`;
+        }
+      }
+      if (cleanVal.includes(':')) {
+        const parts = cleanVal.split(':');
+        if (parts.length >= 2) {
+          return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
+        }
+      }
+      return '00:00';
+    };
+
+    const idLeg = (item.Id_Leg || item.IdLeg || '').toString().trim();
+    const activity = (item.Activity || '').toString().trim();
+
+    let hoursFlight = formatDuration(item['Tempo Operacao'] || item.Tempo_Operacao || item.horas_voo || '00:00');
+    let hoursDuty = formatDuration(item['Tempo Jornada'] || item.Tempo_Jornada || item.horas_jornada || '00:00');
+    const restTime = formatDuration(item['Tempo Repouso'] || item.Tempo_Repouso || item.repouso || '—');
+    const status = (item.Status || item.status || 'completed') as any;
+
+    // Se for folga ou licença remunerada, a jornada e as horas de voo são zeradas
+    if (activity === 'F' || activity === 'LNR24' || activity.startsWith('FOLGA') || activity.startsWith('LNR')) {
+      hoursFlight = '00:00';
+      hoursDuty = '00:00';
+    }
+
+    // Se o Id_Leg começa com "-", é atividade terrestre ou simulador (PC3, briefing, etc.), zera as horas de voo
+    if (idLeg.startsWith('-')) {
+      hoursFlight = '00:00';
+    }
+
+
+    return {
+      id: item.Activity || item.id_voo || item.id || `V-${idx}`,
+      routeFrom: item.Dep || item.origem || item.Origem || '—',
+      routeTo: item.Arr || item.destino || item.Destino || '—',
+      presentationTime: presTime,
+      departureTime: depTime,
+      arrivalTime: arrTime,
+      date: dateStr,
+      restTime: restTime === '00:00' ? '—' : restTime,
+      hoursDuty,
+      hoursFlight,
+      status: ['completed', 'scheduled', 'active'].includes(status) ? status : 'completed'
+    };
+  });
+}
 
 export default function App() {
   // --- Supabase & Subscription / Login State ---
@@ -62,8 +180,10 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
   
-  const [loginEmail, setLoginEmail] = useState('rilazza@gmail.com');
-  const [loginToken, setLoginToken] = useState('AV-OPS-2026-OK');
+  const [loginRE, setLoginRE] = useState('12345');
+  const [loginUsuario, setLoginUsuario] = useState('rilazza');
+  const [loginSenha, setLoginSenha] = useState('senha123');
+  const [showAtrasoModal, setShowAtrasoModal] = useState(false);
   const [isCheckingSub, setIsCheckingSub] = useState(false);
   const [loginError, setLoginError] = useState('');
   
@@ -102,9 +222,9 @@ export default function App() {
     return saved ? JSON.parse(saved) : INITIAL_CREW;
   });
 
-  const [lodging, setLodging] = useState<LodgingInfo>(() => {
-    const saved = localStorage.getItem('av_ops_lodging');
-    return saved ? JSON.parse(saved) : INITIAL_LODGING;
+  const [lodgingMap, setLodgingMap] = useState<Record<string, LodgingInfo>>(() => {
+    const saved = localStorage.getItem('av_ops_lodging_map');
+    return saved ? JSON.parse(saved) : {};
   });
 
   const [operationLog, setOperationLog] = useState<OperationLog>(() => {
@@ -118,10 +238,19 @@ export default function App() {
       name: 'CAPTAIN J. MILLER',
       rank: 'CDR',
       idCode: '8824-H6-LX',
-      dutyHours: '12,450.5 FT',
+      dutyHours: '0.0 Horas',
       isActive: true
     };
   });
+
+
+  const dynamicCrew = useMemo(() => {
+    return [
+      { id: '1', name: pilotDetails.name || 'RICARDO LAZZARINI', role: 'COMANDANTE' },
+      { id: '2', name: 'N/A', role: 'PRIMEIRO OFICIAL' }
+    ];
+  }, [pilotDetails.name]);
+
 
   const [selectedFlight, setSelectedFlight] = useState<Flight | null>(null);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -137,10 +266,50 @@ export default function App() {
       const configData = await fetchQuartaVersaoConfig();
       setQuartaVersao(configData);
 
-      const dbFlights = await fetchFlightsFromSupabase();
-      if (dbFlights && dbFlights.length > 0) {
-        setFlights(dbFlights);
-        setSupabaseSyncMessage('Escala de voos sincronizada ao vivo com o Supabase!');
+      // Sincroniza escala e diárias a partir do Storage se o piloto estiver conectado
+      if (pilotDetails && pilotDetails.idCode && pilotDetails.idCode !== '8824-H6-LX') {
+        if (pilotDetails.cma || pilotDetails.cht || pilotDetails.passaporte) {
+          syncRequiredDocuments(pilotDetails.cma, pilotDetails.cht, pilotDetails.passaporte);
+        }
+        setSupabaseSyncing(true);
+        try {
+          const { scaleCsv, diariasCsv } = await fetchReportsFromStorage(pilotDetails.idCode);
+          
+          const parsedFlights = parseCSV(scaleCsv);
+          if (parsedFlights && parsedFlights.length > 0) {
+            const mappedFlights = mapCSVFlights(parsedFlights);
+            setFlights(mappedFlights);
+            localStorage.setItem('av_ops_flights', JSON.stringify(mappedFlights));
+
+            let totalMinutes = 0;
+            mappedFlights.forEach(f => {
+              const parts = f.hoursFlight.split(':');
+              if (parts.length === 2) {
+                totalMinutes += parseInt(parts[0]) * 60 + parseInt(parts[1]);
+              }
+            });
+            const totalHours = (totalMinutes / 60).toFixed(1);
+            setPilotDetails(prev => ({ ...prev, dutyHours: `${totalHours} FT` }));
+          }
+
+          const parsedDiarias = parseCSV(diariasCsv);
+          if (parsedDiarias && parsedDiarias.length > 0) {
+            localStorage.setItem('av_ops_diarias_real', JSON.stringify(parsedDiarias));
+          }
+
+          setSupabaseSyncMessage('Escala e diárias sincronizadas com o Storage do Supabase!');
+        } catch (storageErr) {
+          console.warn('Erro ao atualizar dados do storage:', storageErr);
+        } finally {
+          setSupabaseSyncing(false);
+          setTimeout(() => setSupabaseSyncMessage(''), 4000);
+        }
+      } else {
+        const dbFlights = await fetchFlightsFromSupabase();
+        if (dbFlights && dbFlights.length > 0) {
+          setFlights(dbFlights);
+          setSupabaseSyncMessage('Escala de voos sincronizada ao vivo com o Supabase!');
+        }
       }
     } catch (e) {
       console.warn('Erro ao carregar dados do Supabase:', e);
@@ -167,8 +336,9 @@ export default function App() {
   }, [crew]);
 
   useEffect(() => {
-    localStorage.setItem('av_ops_lodging', JSON.stringify(lodging));
-  }, [lodging]);
+    localStorage.setItem('av_ops_lodging_map', JSON.stringify(lodgingMap));
+  }, [lodgingMap]);
+
 
   useEffect(() => {
     localStorage.setItem('av_ops_operation_log', JSON.stringify(operationLog));
@@ -178,11 +348,31 @@ export default function App() {
     localStorage.setItem('av_ops_pilot', JSON.stringify(pilotDetails));
   }, [pilotDetails]);
 
+  // Sincroniza Required Documents do perfil real com a lista inferior
+  const syncRequiredDocuments = (cmaVal: string, chtVal: string, passVal: string) => {
+    setDocuments(prevDocs => {
+      const updated = prevDocs.map(d => {
+        if (d.name === 'Class 1 Medical' && cmaVal) {
+          return { ...d, expiryDate: ensureBRDate(cmaVal) };
+        }
+        if (d.name === 'ATPL License' && chtVal) {
+          return { ...d, expiryDate: ensureBRDate(chtVal) };
+        }
+        if (d.name === 'I-94 Visa (USA)' && passVal) {
+          return { ...d, expiryDate: ensureBRDate(passVal) };
+        }
+        return d;
+      });
+      localStorage.setItem('av_ops_documents', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   // --- Handlers ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loginEmail && !loginToken) {
-      setLoginError('Por favor, informe seu E-mail ou Chave de Acesso do Webapp.');
+    if (!loginRE || !loginUsuario || !loginSenha) {
+      setLoginError('Por favor, preencha a Matrícula (RE), Usuário e Senha.');
       return;
     }
     
@@ -190,34 +380,109 @@ export default function App() {
     setLoginError('');
     
     try {
-      const status = await checkUserSubscription(loginEmail, loginToken);
+      const auth = await authenticatePilot(loginRE, loginUsuario, loginSenha);
       
-      if (!status.isPaid) {
-        setLoginError('MENSALIDADE/ANUIDADE EM ATRASO: O acesso ao painel GL-COCKPIT v3.5 está bloqueado até a regularização do plano no Webapp principal.');
+      if (!auth.isAuthenticated) {
+        setLoginError(auth.error || 'Acesso Recusado: Matrícula, usuário ou senha incorretos.');
         setIsCheckingSub(false);
         return;
       }
       
-      // Update pilot name and status based on webapp info
-      setPilotDetails(prev => ({
-        ...prev,
-        name: status.userName || prev.name,
-        isActive: true
-      }));
+      if (!auth.isPaid) {
+        // Dispara o popup avisando do atraso
+        setShowAtrasoModal(true);
+        setIsCheckingSub(false);
+        return;
+      }
       
-      setSessionUser(status);
-      localStorage.setItem('av_ops_session_user', JSON.stringify(status));
+      const profile = auth.profile!;
+      
+      // Atualiza os dados de perfil
+      const updatedPilot = {
+        name: profile.nomeCompleto,
+        rank: 'CDR',
+        idCode: profile.matricula,
+        dutyHours: '0.0 FT', // Será atualizado após carregar os voos
+        isActive: true,
+        cma: profile.cma,
+        cht: profile.cht,
+        passaporte: profile.passaporte
+      };
+      setPilotDetails(updatedPilot);
+      localStorage.setItem('av_ops_pilot', JSON.stringify(updatedPilot));
+      syncRequiredDocuments(profile.cma, profile.cht, profile.passaporte);
+
+      // Objeto de sessão compatível
+      const sessionObj: SubscriptionStatus = {
+        isPaid: true,
+        type: 'demo',
+        validUntil: '2026-12-31',
+        userName: profile.nomeCompleto,
+        email: profile.email,
+        isRealDb: true
+      };
+      
+      setSessionUser(sessionObj);
+      localStorage.setItem('av_ops_session_user', JSON.stringify(sessionObj));
       setLoginError('');
+
+      // --- Tentar baixar arquivos do Storage do Supabase (dados reais) ---
+      setSupabaseSyncing(true);
+      setSupabaseSyncMessage('Conectando ao Storage e baixando arquivos de escala...');
+      
+      try {
+        const { scaleCsv, diariasCsv } = await fetchReportsFromStorage(profile.matricula);
+        
+        // 1. Parsear Escala (QUARTA_VERSAO)
+        const parsedFlights = parseCSV(scaleCsv);
+        if (parsedFlights && parsedFlights.length > 0) {
+          const mappedFlights = mapCSVFlights(parsedFlights);
+
+          // Atualiza voos
+          setFlights(mappedFlights);
+          localStorage.setItem('av_ops_flights', JSON.stringify(mappedFlights));
+
+          // Calcular total de horas de voo para exibir no perfil
+          let totalMinutes = 0;
+          mappedFlights.forEach(f => {
+            const parts = f.hoursFlight.split(':');
+            if (parts.length === 2) {
+              totalMinutes += parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+            }
+          });
+          const totalHours = (totalMinutes / 60).toFixed(1);
+          setPilotDetails(prev => ({
+            ...prev,
+            dutyHours: `${totalHours} Horas`
+          }));
+        }
+
+
+        // 2. Parsear Diárias
+        const parsedDiarias = parseCSV(diariasCsv);
+        if (parsedDiarias && parsedDiarias.length > 0) {
+          localStorage.setItem('av_ops_diarias_real', JSON.stringify(parsedDiarias));
+        }
+
+        setSupabaseSyncMessage('Escala e diárias reais importadas com sucesso!');
+      } catch (storageErr: any) {
+        console.warn('Não foi possível obter dados reais do Storage:', storageErr.message);
+        setSupabaseSyncMessage(`Aviso: Login ok, mas arquivos reais não encontrados no Storage (${storageErr.message}). Exibindo escala padrão.`);
+      } finally {
+        setSupabaseSyncing(false);
+        setTimeout(() => setSupabaseSyncMessage(''), 6000);
+      }
+
     } catch (err) {
-      setLoginError('Falha de conexão com o Webapp/Supabase. Verifique os dados ou tente novamente.');
+      setLoginError('Falha de conexão com o Webapp/Supabase. Verifique as credenciais ou tente novamente.');
     } finally {
       setIsCheckingSub(false);
     }
   };
 
   const handleLogout = () => {
-    setSessionUser(null);
-    localStorage.removeItem('av_ops_session_user');
+    localStorage.clear();
+    window.location.reload();
   };
 
   const handleToggleMockPayment = () => {
@@ -404,37 +669,52 @@ export default function App() {
 
             <form onSubmit={handleLogin} className="space-y-sm font-mono text-xs">
               <div className="space-y-1">
-                <label className="text-text-muted font-bold block uppercase tracking-wide">E-MAIL DO PILOTO (WEBAPP)</label>
+                <label className="text-text-muted font-bold block uppercase tracking-wide">REGISTRO NA EMPRESA (MATRÍCULA / RE)</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-text-muted pointer-events-none">
+                    <User size={12} />
+                  </span>
+                  <input
+                    type="text"
+                    value={loginRE}
+                    onChange={(e) => setLoginRE(e.target.value)}
+                    placeholder="Ex: 12345"
+                    className="w-full bg-surface-low border border-outline-tactical rounded pl-8 pr-3 py-2 text-text-bright focus:outline-none focus:border-primary font-bold transition-all"
+                  />
+                </div>
+                <p className="text-[10px] text-text-muted">Use <strong className="text-primary font-normal">atrasado</strong> para simular pagamento bloqueado.</p>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-text-muted font-bold block uppercase tracking-wide">USUÁRIO DO SITE</label>
                 <div className="relative">
                   <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-text-muted pointer-events-none">
                     @
                   </span>
                   <input
-                    type="email"
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="piloto@exemplo.com"
+                    type="text"
+                    value={loginUsuario}
+                    onChange={(e) => setLoginUsuario(e.target.value)}
+                    placeholder="Ex: rilazza"
                     className="w-full bg-surface-low border border-outline-tactical rounded pl-8 pr-3 py-2 text-text-bright focus:outline-none focus:border-primary font-bold transition-all"
                   />
                 </div>
-                <p className="text-[10px] text-text-muted">Use <strong className="text-primary font-normal">rilazza@gmail.com</strong> para testes com assinatura ativa.</p>
               </div>
 
               <div className="space-y-1">
-                <label className="text-text-muted font-bold block uppercase tracking-wide">CHAVE DE ACESSO / TOKEN</label>
+                <label className="text-text-muted font-bold block uppercase tracking-wide">SENHA DO SITE</label>
                 <div className="relative">
                   <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-text-muted pointer-events-none">
                     <Key size={12} />
                   </span>
                   <input
-                    type="text"
-                    value={loginToken}
-                    onChange={(e) => setLoginToken(e.target.value)}
-                    placeholder="AV-OPS-XXXX-XX"
-                    className="w-full bg-surface-low border border-outline-tactical rounded pl-8 pr-3 py-2 text-text-bright focus:outline-none focus:border-primary font-bold transition-all uppercase"
+                    type="password"
+                    value={loginSenha}
+                    onChange={(e) => setLoginSenha(e.target.value)}
+                    placeholder="Sua senha..."
+                    className="w-full bg-surface-low border border-outline-tactical rounded pl-8 pr-3 py-2 text-text-bright focus:outline-none focus:border-primary font-bold transition-all"
                   />
                 </div>
-                <p className="text-[10px] text-text-muted">Use <strong className="text-primary font-normal">AV-OPS-BLOCKED</strong> para simular uma assinatura inativa / atrasada.</p>
               </div>
 
               <button
@@ -442,7 +722,7 @@ export default function App() {
                 disabled={isCheckingSub}
                 className="w-full bg-primary text-on-primary font-black py-2.5 rounded hover:bg-primary-hover active:scale-[0.98] transition-all uppercase tracking-widest mt-4 cursor-pointer text-center"
               >
-                {isCheckingSub ? 'Verificando Assinatura...' : 'AUTENTICAR COCKPIT'}
+                {isCheckingSub ? 'Verificando Cadastro...' : 'AUTENTICAR COCKPIT'}
               </button>
             </form>
 
@@ -461,6 +741,32 @@ export default function App() {
               </div>
             </div>
           </div>
+
+          {/* MODAL DE MENSALIDADE EM ATRASO */}
+          {showAtrasoModal && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+              <div className="max-w-md w-full bg-surface-card border border-expiring-red p-md sm:p-lg rounded-xl shadow-2xl space-y-md text-center glow-red relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-1 bg-expiring-red" />
+                <div className="inline-flex items-center justify-center p-3 bg-red-950/40 rounded-full border border-expiring-red/40 text-expiring-red">
+                  <AlertTriangle size={36} />
+                </div>
+                <h2 className="text-lg sm:text-xl font-extrabold uppercase text-expiring-red font-sans tracking-wide">
+                  Mensalidade / Anuidade em Atraso
+                </h2>
+                <p className="font-mono text-xs text-text-muted leading-relaxed">
+                  O acesso ao painel <strong className="text-text-bright font-normal">AV-OPS COCKPIT v3.5</strong> está bloqueado temporariamente.
+                  <br /><br />
+                  Por favor, acesse o site principal para regularizar sua situação financeira e restabelecer o seu acesso imediato.
+                </p>
+                <button
+                  onClick={() => setShowAtrasoModal(false)}
+                  className="w-full bg-expiring-red hover:bg-red-700 text-on-primary font-black py-2 rounded transition-all uppercase font-mono tracking-widest cursor-pointer text-center"
+                >
+                  Fechar Alerta
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         /* ---------------------------------- */
@@ -560,145 +866,7 @@ export default function App() {
                   isActive={pilotDetails.isActive}
                 />
 
-                {/* ---------------------------------- */}
-                {/* SUPABASE & WEBAPP INTEGRATION CARD */}
-                {/* ---------------------------------- */}
-                <section className="bg-surface-card border border-outline-tactical p-md rounded-lg space-y-md">
-                  <div className="flex items-center gap-2 border-b border-outline-tactical/40 pb-2">
-                    <Database size={16} className="text-primary" />
-                    <h3 className="font-mono text-xs font-bold text-text-bright tracking-widest uppercase">
-                      Integração Webapp & Banco Supabase
-                    </h3>
-                  </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-md text-xs font-mono">
-                    
-                    {/* Column 1: Connection Setup & Status */}
-                    <div className="space-y-sm">
-                      <div className="bg-surface-low p-sm rounded border border-outline-tactical/60 space-y-2">
-                        <div>
-                          <span className="text-[9px] text-text-muted uppercase block font-mono">Sessão Autenticada</span>
-                          <div className="text-primary font-bold truncate text-[11px]">{sessionUser.userName}</div>
-                          <div className="text-[10px] text-text-muted truncate">{sessionUser.email}</div>
-                        </div>
-
-                        {sessionUser.isRealDb ? (
-                          <div className="text-[10px] text-valid-green flex items-center gap-1.5 font-bold bg-green-500/10 p-2 rounded border border-green-500/20 uppercase tracking-wide">
-                            <CheckCircle2 size={12} />
-                            <span>Supabase: Escala Real Ativa</span>
-                          </div>
-                        ) : (
-                          <div className="text-[10px] text-amber-400 flex flex-col gap-1 bg-amber-500/5 p-2 rounded border border-amber-500/20 uppercase tracking-wide">
-                            <div className="flex items-center gap-1.5 font-bold">
-                              <AlertTriangle size={12} />
-                              <span>Acesso via Demonstração Local</span>
-                            </div>
-                            {sessionUser.dbError && (
-                              <p className="text-[9px] text-text-muted font-mono lowercase normal-case leading-relaxed">
-                                motivo: {sessionUser.dbError}
-                              </p>
-                            )}
-                          </div>
-                        )}
-
-                        <div className="text-[10px] text-valid-green flex items-center gap-1 mt-1 font-bold">
-                          <CheckCircle2 size={12} />
-                          Assinatura Ativa ({sessionUser.type.toUpperCase()})
-                        </div>
-                      </div>
-
-                      <form onSubmit={handleUpdateConfig} className="space-y-sm">
-                        <span className="text-[9px] text-primary uppercase block font-bold tracking-wider mt-2">Configurar Conexão Direta</span>
-                        <div>
-                          <label className="text-text-muted text-[10px] block mb-0.5">SUPABASE PROJECT URL</label>
-                          <input
-                            type="text"
-                            value={inputUrl}
-                            onChange={(e) => setInputUrl(e.target.value)}
-                            placeholder="https://yourproject.supabase.co"
-                            className="w-full bg-surface-low border border-outline-tactical rounded p-2 font-bold text-text-bright focus:outline-none"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-text-muted text-[10px] block mb-0.5">SUPABASE ANON PUBLIC KEY</label>
-                          <input
-                            type="password"
-                            value={inputKey}
-                            onChange={(e) => setInputKey(e.target.value)}
-                            placeholder="your-anon-key..."
-                            className="w-full bg-surface-low border border-outline-tactical rounded p-2 font-bold text-text-bright focus:outline-none"
-                          />
-                        </div>
-                        <div className="flex gap-2 justify-end">
-                          <button
-                            type="submit"
-                            className="bg-surface-container hover:bg-zinc-800 border border-outline-tactical text-[10px] py-1.5 px-3 rounded uppercase font-bold text-primary cursor-pointer active:scale-95 transition-transform"
-                          >
-                            Salvar Chaves
-                          </button>
-                        </div>
-                      </form>
-
-                      {/* Sync triggers */}
-                      <div className="pt-2 border-t border-outline-tactical/30 space-y-sm">
-                        <span className="text-[9px] text-text-muted uppercase block font-bold">Sincronização de Voos</span>
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={handleFetchSupabase}
-                            disabled={supabaseSyncing}
-                            className="bg-primary/10 border border-outline-gold text-primary hover:bg-primary/20 text-[10px] font-bold py-2 rounded uppercase cursor-pointer text-center"
-                          >
-                            Baixar Escala
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleSeedSupabase}
-                            disabled={supabaseSyncing}
-                            className="bg-zinc-900 border border-outline-tactical text-text-bright hover:bg-zinc-800 text-[10px] font-bold py-2 rounded uppercase cursor-pointer text-center"
-                          >
-                            Semear Supabase
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Column 2: SQL Scripts & How-To */}
-                    <div className="space-y-sm flex flex-col justify-between">
-                      <div className="bg-surface-low p-sm rounded border border-outline-tactical/60 flex-grow flex flex-col justify-between">
-                        <div>
-                          <span className="text-[9px] text-text-muted uppercase block font-bold mb-1">Como integrar com seu banco</span>
-                          <p className="text-[10px] text-text-muted leading-relaxed">
-                            Para carregar a <strong className="text-primary font-normal">escala de voos real</strong>, as taxas do sumário e as assinaturas diretamente do seu Supabase, crie as tabelas executando o script SQL gerado abaixo no painel do Supabase.
-                          </p>
-                        </div>
-
-                        <div className="mt-3">
-                          <button
-                            type="button"
-                            onClick={handleCopySQL}
-                            className="w-full bg-primary text-on-primary font-bold text-[10px] py-1.5 px-3 rounded uppercase flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all"
-                          >
-                            {copiedSql ? <Check size={12} /> : <Copy size={12} />}
-                            {copiedSql ? 'COPIADO COM SUCESSO!' : 'COPIAR SCRIPT SQL TABELAS'}
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="bg-primary/5 p-2 rounded border border-outline-gold/20 text-[10px] text-primary space-y-1">
-                        <div className="font-bold uppercase tracking-wider text-[9px]">DIÁRIAS & RATES (QUARTA_VERSAO)</div>
-                        <p className="leading-normal">
-                          Configurações lidas: <strong className="text-text-bright font-normal">{quartaVersao.versionCode}</strong> - {quartaVersao.description}
-                        </p>
-                        <p className="leading-normal">
-                          Nacional: <strong className="text-text-bright font-normal">R$ {quartaVersao.diariasNacionalRate}</strong> / Internac.: <strong className="text-text-bright font-normal">R$ {quartaVersao.diariasInternacionalRate}</strong>
-                        </p>
-                      </div>
-
-                    </div>
-
-                  </div>
-                </section>
 
                 {/* Profile Config Form to edit pilot */}
                 <section className="bg-surface-card border border-outline-tactical p-md rounded-lg">
@@ -707,7 +875,7 @@ export default function App() {
                   </h3>
                   
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm text-xs font-mono">
-                    <div>
+                    <div className="sm:col-span-2">
                       <label className="block text-text-muted mb-1">NOME DO COMANDANTE</label>
                       <input
                         type="text"
@@ -737,15 +905,6 @@ export default function App() {
                         <option value="F.O.">FIRST OFFICER (F.O.)</option>
                       </select>
                     </div>
-                    <div>
-                      <label className="block text-text-muted mb-1">TOTAL HORAS DE VOO (FT)</label>
-                      <input
-                        type="text"
-                        value={pilotDetails.dutyHours}
-                        onChange={(e) => setPilotDetails({ ...pilotDetails, dutyHours: e.target.value })}
-                        className="w-full bg-surface-low border border-outline-tactical rounded p-2 text-text-bright focus:outline-none"
-                      />
-                    </div>
                   </div>
 
                   {/* Action buttons on Profile */}
@@ -754,7 +913,7 @@ export default function App() {
                       onClick={() => {
                         setActiveTab('flights');
                       }}
-                      className="bg-primary text-on-primary font-mono text-xs font-black tracking-widest py-2 px-md hover:bg-primary-hover active:scale-95 transition-transform rounded uppercase"
+                      className="bg-primary text-on-primary font-mono text-xs font-black tracking-widest py-2 px-md hover:bg-primary-hover active:scale-95 transition-transform rounded uppercase cursor-pointer"
                     >
                       UPDATE ESCALA
                     </button>
@@ -792,15 +951,21 @@ export default function App() {
             {activeTab === 'details' && (
               <FlightDetails
                 selectedFlight={selectedFlight}
-                crew={crew}
-                lodging={lodging}
+                crew={dynamicCrew}
+                lodging={selectedFlight ? (lodgingMap[selectedFlight.id] || { hotelName: 'N/A', address: 'N/A', checkIn: 'N/A', reservationCode: 'N/A' }) : { hotelName: 'N/A', address: 'N/A', checkIn: 'N/A', reservationCode: 'N/A' }}
                 operationLog={operationLog}
                 onUpdateCrew={setCrew}
-                onUpdateLodging={setLodging}
+                onUpdateLodging={(newLodging) => {
+                  if (selectedFlight) {
+                    const updated = { ...lodgingMap, [selectedFlight.id]: newLodging };
+                    setLodgingMap(updated);
+                  }
+                }}
                 onUpdateOperationLog={setOperationLog}
                 onConfirmOperation={handleConfirmOperation}
               />
             )}
+
 
             {/* Reports panel tab */}
             {activeTab === 'reports' && (

@@ -284,11 +284,230 @@ export async function saveFlightsToSupabase(flights: Flight[]): Promise<boolean>
       return false;
     }
     return true;
+    return true;
   } catch (e) {
     console.error('Falha ao salvar voos:', e);
     return false;
   }
 }
+
+// --- NEW DATA LOGISTICS & LOGINS ---
+
+export interface PilotProfile {
+  nomeCompleto: string;
+  cma: string;
+  cht: string;
+  passaporte: string;
+  matricula: string;
+  email: string;
+}
+
+export interface AuthResult {
+  isAuthenticated: boolean;
+  isPaid: boolean;
+  profile?: PilotProfile;
+  error?: string;
+}
+
+/**
+ * Autentica o piloto usando Matrícula/RE, usuário e senha, verificando também o status do pagamento.
+ */
+export async function authenticatePilot(re: string, usuario: string, senha: string): Promise<AuthResult> {
+  const client = getSupabaseClient();
+  
+  // MOCK FLOW IF SUPABASE IS NOT CONFIGURED
+  if (!client) {
+    if (re.toLowerCase() === 'atrasado') {
+      return {
+        isAuthenticated: true,
+        isPaid: false,
+        profile: {
+          nomeCompleto: 'RICARDO LAZZARINI (MOCK ATRASADO)',
+          cma: 'CMA-99221',
+          cht: 'CHT-88442',
+          passaporte: 'BR-A112233',
+          matricula: 'atrasado',
+          email: 'atrasado@avops.com'
+        }
+      };
+    }
+    
+    return {
+      isAuthenticated: true,
+      isPaid: true,
+      profile: {
+        nomeCompleto: 'RICARDO LAZZARINI (MOCK DEMO)',
+        cma: 'CMA-1234567',
+        cht: 'CHT-9876543',
+        passaporte: 'BR-FD12345',
+        matricula: re || '12345',
+        email: usuario || 'rilazza@gmail.com'
+      }
+    };
+  }
+
+  try {
+    // 1. Busca perfil do piloto pela matricula (registro_empresa no banco de dados real)
+    const { data: profile, error: profileErr } = await client
+      .from('profiles')
+      .select('*')
+      .eq('registro_empresa', re)
+      .maybeSingle();
+
+    if (profileErr) {
+      console.warn('Erro ao consultar tabela profiles:', profileErr.message);
+    }
+
+    if (!profile) {
+      return {
+        isAuthenticated: false,
+        isPaid: false,
+        error: `Matrícula ou perfil não encontrado no sistema. Por favor, verifique se a matrícula '${re}' existe no banco.`
+      };
+    }
+
+    // 2. Verifica a mensalidade no campo paid_until
+    let isPaid = true;
+    if (profile.paid_until) {
+      try {
+        const limitDate = new Date(profile.paid_until);
+        const today = new Date();
+        if (limitDate.getTime() < today.getTime()) {
+          isPaid = false; // Vencido
+        }
+      } catch (e) {
+        console.warn('Erro ao analisar data paid_until:', e);
+      }
+    }
+
+    const formatDate = (dateStr: string) => {
+      if (!dateStr) return '—';
+      const parts = dateStr.substring(0, 10).split('-');
+      if (parts.length === 3) {
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      }
+      return dateStr;
+    };
+
+    return {
+      isAuthenticated: true,
+      isPaid: isPaid,
+      profile: {
+        nomeCompleto: profile.nome_completo || 'PILOTO REAL',
+        cma: formatDate(profile.cma_vencimento),
+        cht: formatDate(profile.cht_validade),
+        passaporte: formatDate(profile.passaporte_vencimento),
+        matricula: profile.registro_empresa || re,
+        email: usuario || '—'
+      }
+    };
+  } catch (err: any) {
+    console.error('Erro na autenticação via Supabase:', err);
+    return {
+      isAuthenticated: false,
+      isPaid: false,
+      error: `Exceção na chamada de banco: ${err.message || String(err)}`
+    };
+  }
+}
+
+/**
+ * Faz download dos arquivos de diárias e escala da pasta do RE no bucket 'relatorios' do Supabase Storage.
+ */
+export async function fetchReportsFromStorage(re: string): Promise<{ scaleCsv: string; diariasCsv: string }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    // Retorna dados fictícios mockados em caso de falta de Supabase
+    throw new Error('Supabase não configurado localmente. Configure a URL e a KEY no painel de configurações.');
+  }
+
+  // 1. Listar arquivos na pasta correspondente à matrícula
+  const { data: files, error: listErr } = await client.storage.from('relatorios').list(re);
+  if (listErr) {
+    throw new Error(`Erro ao acessar a pasta '${re}' no bucket 'relatorios': ${listErr.message}`);
+  }
+
+  if (!files || files.length === 0) {
+    throw new Error(`A pasta '${re}' está vazia ou não existe no bucket 'relatorios'. Certifique-se de que a automação fez o upload dos arquivos.`);
+  }
+
+  // 2. Encontrar o CSV de Escala (QUARTA_VERSAO ou PASSO_4) e o CSV de Diárias
+  const scaleFile = files.find(f => f.name.toUpperCase().includes('QUARTA_VERSAO') || f.name.toUpperCase().includes('PASSO_4'));
+  const diariasFile = files.find(f => f.name.toUpperCase().includes('DIARIAS') || f.name.toUpperCase().includes('RELATORIO_DIARIAS'));
+
+  if (!scaleFile) {
+    throw new Error(`Arquivo de Escala contendo 'QUARTA_VERSAO' não foi localizado na pasta '${re}' do storage.`);
+  }
+  if (!diariasFile) {
+    throw new Error(`Arquivo de Diárias contendo 'DIARIAS' não foi localizado na pasta '${re}' do storage.`);
+  }
+
+  // 3. Efetuar download do CSV de escala
+  const { data: scaleBlob, error: scaleDlErr } = await client.storage.from('relatorios').download(`${re}/${scaleFile.name}`);
+  if (scaleDlErr || !scaleBlob) {
+    throw new Error(`Erro no download do arquivo '${scaleFile.name}': ${scaleDlErr?.message || 'Arquivo vazio'}`);
+  }
+
+  // 4. Efetuar download do CSV de diárias
+  const { data: diariasBlob, error: diariasDlErr } = await client.storage.from('relatorios').download(`${re}/${diariasFile.name}`);
+  if (diariasDlErr || !diariasBlob) {
+    throw new Error(`Erro no download do arquivo '${diariasFile.name}': ${diariasDlErr?.message || 'Arquivo vazio'}`);
+  }
+
+  const scaleCsv = await scaleBlob.text();
+  const diariasCsv = await diariasBlob.text();
+
+  return { scaleCsv, diariasCsv };
+}
+
+/**
+ * Parseador genérico e flexível de CSV para converter os dados dos arquivos baixados em objetos estruturados.
+ */
+export function parseCSV(text: string): any[] {
+  if (!text) return [];
+  const lines = text.split(/\r?\n/);
+  if (lines.length === 0) return [];
+
+  const firstLine = lines[0];
+  const separator = firstLine.includes(';') ? ';' : ',';
+
+  const headers = firstLine.split(separator).map(h => h.trim().replace(/^["']|["']$/g, ''));
+  const results: any[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const row: string[] = [];
+    let insideQuotes = false;
+    let currentCell = '';
+
+    for (let charIdx = 0; charIdx < line.length; charIdx++) {
+      const char = line[charIdx];
+      if (char === '"') {
+        insideQuotes = !insideQuotes;
+      } else if (char === separator && !insideQuotes) {
+        row.push(currentCell.trim().replace(/^["']|["']$/g, ''));
+        currentCell = '';
+      } else {
+        currentCell += char;
+      }
+    }
+    row.push(currentCell.trim().replace(/^["']|["']$/g, ''));
+
+    if (row.length >= headers.length) {
+      const obj: any = {};
+      headers.forEach((header, index) => {
+        if (header) {
+          obj[header] = row[index] || '';
+        }
+      });
+      results.push(obj);
+    }
+  }
+  return results;
+}
+
 
 // Generator for Supabase SQL schema so the user can easily copy and paste
 export function getSupabaseSQLScript(): string {

@@ -8,6 +8,9 @@ interface IdentityCardProps {
   dutyHours: string;
   isActive: boolean;
   onUpdateEscala?: () => void;
+  cma?: string;
+  cht?: string;
+  passaporte?: string;
 }
 
 export default function IdentityCard({
@@ -16,7 +19,10 @@ export default function IdentityCard({
   idCode = '8824-H6-LX',
   dutyHours = '12,450.5 FT',
   isActive = true,
-  onUpdateEscala
+  onUpdateEscala,
+  cma = '—',
+  cht = '—',
+  passaporte = '—'
 }: IdentityCardProps) {
   const [imageError, setImageError] = useState(false);
   const portraitUrl = 'https://lh3.googleusercontent.com/aida-public/AB6AXuAkCSWfCLwRlOSaw5X1-KNdlANpD9Hlf9Odtk6GCnOYHFxOdZ4cpdsI_NLGKR4t7RM0YV4qhS-fKocfFKwCkoaHeKRxulHtoO-fQzRVQ6B_6lNRF36M4Oqbp6mMJKUK54985LQgAWtZbYG5k6b4aSKsndDb4Wp_4YWuzvMZhzexeqmXejBZKOeyZYrIW3_TTPwd7qWOzP_WQK3WqNXjAeIWlOqJ26mKe8pYoc9IdcbCJiJFrL063pnvvZzgHyA_Iu_ENGDaim-JWgU';
@@ -61,14 +67,8 @@ export default function IdentityCard({
           </div>
           
           <div className="space-y-1 mt-3">
-            <p className="font-mono text-xs text-text-muted">
-              ID: {idCode}
-            </p>
-            <div className="flex items-center gap-2">
-              <Clock size={14} className="text-primary" />
-              <p className="font-mono text-sm text-primary font-bold">
-                {dutyHours}
-              </p>
+            <div className="font-mono text-[11px] text-text-muted">
+              MATRÍCULA: <span className="text-text-bright font-bold">{idCode}</span>
             </div>
           </div>
         </div>
