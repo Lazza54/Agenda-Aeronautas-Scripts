@@ -1,0 +1,8 @@
+{
+  "name": "Remix: AV-OPS Pilot Hub",
+  "description": "Central de Operações de Voo (AV-OPS) de alto desempenho para pilotos. Acompanhe escalas, validade de documentos, registre deslocamentos em tempo real e emita relatórios de diárias.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
