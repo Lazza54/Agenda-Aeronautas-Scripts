@@ -50,6 +50,29 @@ def _resolver_json_apoio(file_name: str) -> str:
             return candidato
     return candidatos[0]
 
+import unicodedata
+def _normalizar_texto(valor) -> str:
+    if valor is None: return ''
+    txt = str(valor).strip().upper()
+    txt = unicodedata.normalize('NFKD', txt)
+    return ''.join(ch for ch in txt if not unicodedata.combining(ch))
+
+def _carregar_atividades_pagas_regras_voo_latam():
+    file_path = os.path.join(BASE_COMMON_FILES_PATH, 'AtividadesEscalaLATAM.json')
+    if not os.path.exists(file_path): return set()
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except: return set()
+
+    atividades = data.get('atividades', []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+    tokens = set()
+    for entry in atividades:
+        if isinstance(entry, dict) and entry.get("atividade paga", "").strip().upper() == "S" and entry.get("segue regras do voo", "").strip().upper() == "S":
+            c = _normalizar_texto(entry.get('codigo_iflight_neo', ''))
+            if c: tokens.add(c)
+    return tokens
+
 def gerar_nome_csv_saida_base(nome_csv_entrada: str) -> str:
     """
     Gera o nome base do arquivo CSV de saída (sem timestamp), substituindo sufixos de etapas anteriores
@@ -620,32 +643,35 @@ def processar_dados_aeronautica():
     # --- 5. Filtragem por tipos_voo.json E Id_Leg ---
     initial_row_count = len(df)
     
-    def extract_activity_prefix(activity_str):
-        if pd.isna(activity_str):
-            return None
-        s = str(activity_str).strip()
-        match = re.match(r'^([A-Za-z]{2})', s)
-        if match:
-            return match.group(1).upper()
-        return None
+    def activity_starts_with_valid_tipos(activity_str):
+        if pd.isna(activity_str) or not tipos_voo_data:
+            return False
+        activity_clean = str(activity_str).strip().upper()
+        return any(activity_clean.startswith(tipo) for tipo in tipos_voo_data)
 
-    df['activity_prefix'] = df['activity'].apply(extract_activity_prefix)
-
-    activity_filter_condition = df['activity_prefix'].isin(tipos_voo_data) if tipos_voo_data else pd.Series(True, index=df.index)
+    activity_filter_condition = df['activity'].apply(activity_starts_with_valid_tipos) if tipos_voo_data else pd.Series(True, index=df.index)
     
     id_leg_filter_condition_for_inclusion = df['id_leg'].notna() & df['id_leg'].astype(str).str.endswith(('-F', '-IF'))
 
-    if tipos_voo_data:
-        df_processed = df[activity_filter_condition & id_leg_filter_condition_for_inclusion].copy()
-        print(f"Total de linhas lidas: {initial_row_count}. Linhas após filtrar por tipos_voo E Id_Leg (terminando com '-F' ou '-IF'): {len(df_processed)}")
+    nome_arquivo_upper = os.path.basename(input_csv_path).upper()
+    cond_latam_json = pd.Series(False, index=df.index)
+    if "LATAM" in nome_arquivo_upper:
+        atividade_voo_latam = (
+            df['activity']
+            .astype(str)
+            .str.strip()
+            .str.upper()
+            .str.match(r'^[A-Z]{2,3}\d{2,5}[A-Z]?$', na=False)
+        )
+        latam_paid_flight_activities = _carregar_atividades_pagas_regras_voo_latam()
+        cond_latam_json = df['activity'].astype(str).str.strip().str.upper().isin(latam_paid_flight_activities)
+        activity_filter_condition = activity_filter_condition | atividade_voo_latam | cond_latam_json
 
-        # Fallback LATAM: em alguns cenários o prefixo extraído (2 letras)
-        # não casa com tipos_voo.json e zera o dataframe.
-        nome_arquivo_upper = os.path.basename(input_csv_path).upper()
-        if len(df_processed) == 0 and "LATAM" in nome_arquivo_upper:
-            print("Aviso: filtro por tipos_voo retornou 0 linhas para LATAM. Aplicando fallback por Id_Leg.")
-            df_processed = df[id_leg_filter_condition_for_inclusion].copy()
-            print(f"Linhas após fallback LATAM (Id_Leg): {len(df_processed)}")
+    id_leg_filter_condition_for_inclusion = id_leg_filter_condition_for_inclusion | cond_latam_json
+
+    if tipos_voo_data or "LATAM" in nome_arquivo_upper:
+        df_processed = df[activity_filter_condition & id_leg_filter_condition_for_inclusion].copy()
+        print(f"Total de linhas lidas: {initial_row_count}. Linhas após filtrar por tipos_voo/LATAM E Id_Leg: {len(df_processed)}")
 
         if initial_row_count - len(df_processed) > 0:
             print(f"{initial_row_count - len(df_processed)} linhas foram removidas (não atendem aos critérios de filtro).")
@@ -701,13 +727,28 @@ def processar_dados_aeronautica():
     
     print(f"Linhas que atendem condicao para calculo de Repouso Extra: {mask_for_actual_calculation.sum()}")
     
-    # Calcula o tempo repouso extra total (apenas se > 12 horas)
+    # Calcula o tempo de repouso total (checkin da próxima etapa - checkout da etapa atual)
     tempo_repouso_total = df_processed.loc[mask_for_actual_calculation, 'checkin_next_leg'] - df_processed.loc[mask_for_actual_calculation, 'checkout']
-    mask_repouso_maior_12h = tempo_repouso_total > pd.Timedelta(hours=12)
     
-    # Calcula o tempo extra (subtrai 12 horas)
+    # 1. Preencher Tempo Repouso (Total)
+    df_processed.loc[mask_for_actual_calculation, 'tempo_repouso'] = tempo_repouso_total
+    
+    # 2. Preencher Repouso Extra Simples (> 12h)
+    mask_repouso_maior_12h = tempo_repouso_total > pd.Timedelta(hours=12)
     df_processed.loc[mask_for_actual_calculation & mask_repouso_maior_12h, 'tempo_repouso_extra_total'] = \
         tempo_repouso_total[mask_repouso_maior_12h] - pd.Timedelta(hours=12)
+    df_processed.loc[mask_for_actual_calculation & mask_repouso_maior_12h, 'tempo_repouso_extra_simples'] = \
+        tempo_repouso_total[mask_repouso_maior_12h] - pd.Timedelta(hours=12)
+        
+    # 3. Preencher Repouso Extra Composta (> 16h)
+    mask_repouso_maior_16h = tempo_repouso_total > pd.Timedelta(hours=16)
+    df_processed.loc[mask_for_actual_calculation & mask_repouso_maior_16h, 'tempo_repouso_extra_composta'] = \
+        tempo_repouso_total[mask_repouso_maior_16h] - pd.Timedelta(hours=16)
+        
+    # 4. Preencher Repouso Extra Revezamento (> 24h)
+    mask_repouso_maior_24h = tempo_repouso_total > pd.Timedelta(hours=24)
+    df_processed.loc[mask_for_actual_calculation & mask_repouso_maior_24h, 'tempo_repouso_extra_revezamento'] = \
+        tempo_repouso_total[mask_repouso_maior_24h] - pd.Timedelta(hours=24)
     
     # Aplica a função de cálculo para Repouso Extra detalhado
     mask_final = mask_for_actual_calculation & mask_repouso_maior_12h

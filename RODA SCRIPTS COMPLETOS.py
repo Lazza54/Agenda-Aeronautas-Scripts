@@ -27,7 +27,8 @@ DIR_SCRIPTS      = Path(__file__).parent
 CONFIG_FILE      = DIR_SCRIPTS / "orquestrador_config.json"
 
 SCRIPTS = {
-    "LATAM": "IMPORTA ESCALA PDF LATAM PASSO 1.py",
+    "LATAM_IFLIGHT": "IMPORTA ESCALA PDF LATAM PASSO 1.py",
+    "LATAM_CREWTOPIA": "IMPORTA ESCALA PDF LATAM CREWTOPIA PASSO 1.py",
     "SIMPL": "IMPORTA ESCALA PDF SIMPL AZUL 19082025 PASSO 1.py",
     "SABRE": "IMPORTA ESCALA PDF SABRE AZUL 19082025 PASSO 1A.py",
     "CIV":   "IMPORTA ESCALA PDF CIV PASSO 1.py",
@@ -78,7 +79,15 @@ SCRIPTS_RELATORIOS = [
 def detectar_tipo(nome: str):
     n = nome.upper()
     # Prioridade explícita para evitar ambiguidades no nome do arquivo.
-    for tipo in ("LATAM", "SIMPL", "SABRE", "CIV"):
+    if "LATAM" in n:
+        if "CREWTOPIA" in n:
+            return "LATAM_CREWTOPIA"
+        elif "IFLIGHT" in n:
+            return "LATAM_IFLIGHT"
+        else:
+            return None # Exige que o usuário especifique o sistema
+
+    for tipo in ("SIMPL", "SABRE", "CIV"):
         if tipo in n:
             return tipo
     return None
@@ -381,9 +390,9 @@ class App:
         if m_nome:
             nome = m_nome.group(1).strip(" _-")
 
-        m_re = re.search(r"_[A-Z]{3,4}__+(\d+)_", base, flags=re.IGNORECASE)
+        m_re = re.search(r"_[A-Z]{3,4}[_\s]+(\d+)_", base, flags=re.IGNORECASE)
         if m_re:
-            re_empresa = m_re.group(1)
+            re_empresa = str(int(m_re.group(1)))
 
         return nome, re_empresa
 
@@ -693,6 +702,8 @@ class App:
 
     def _enviar_book_por_email(self, destinatarios: list[str], anexos: list[Path]) -> bool:
         """Envia email por SMTP para os destinatários com os anexos definidos."""
+        # TRAVA TEMPORÁRIA DE TESTES - Removida para reativar os envios
+
         host = os.getenv("AERO_SMTP_HOST", "smtppro.zoho.com").strip()
         port = int(os.getenv("AERO_SMTP_PORT", "465").strip() or "465")
         usuario = os.getenv("AERO_SMTP_USER", "contato@spectrum-system.com").strip()
@@ -795,7 +806,7 @@ class App:
         self._log(f"[ENVIO] Anexos: {', '.join(a.name for a in anexos)}")
         return True
 
-    def _upload_para_supabase_storage(self, caminho_arquivo: Path, nome_aeronauta: str, re_aeronauta: str) -> bool:
+    def _upload_para_supabase_storage(self, caminho_arquivo: Path, nome_aeronauta: str, re_aeronauta: str, mes_ano_str: str = "") -> bool:
         """Faz upload de um arquivo para o bucket do Supabase Storage."""
         try:
             try:
@@ -812,8 +823,11 @@ class App:
 
             bucket_name = os.environ.get("SUPABASE_BUCKET_RELATORIOS", "relatorios").strip()
             
-            # Organiza os arquivos por RE ou nome do aeronauta para evitar colisão
-            pasta_destino = re_aeronauta if re_aeronauta else (nome_aeronauta if nome_aeronauta else "geral")
+            # Organiza os arquivos obrigatoriamente por RE e subpasta MMYYYY (se fornecido)
+            pasta_destino = re_aeronauta if re_aeronauta else "sem_re"
+            if mes_ano_str:
+                pasta_destino = f"{pasta_destino}/{mes_ano_str}"
+                
             caminho_storage = f"{pasta_destino}/{caminho_arquivo.name}"
 
             self._log(f"[SUPABASE STORAGE] Enviando '{caminho_arquivo.name}' para '{bucket_name}/{caminho_storage}'...")
@@ -895,7 +909,7 @@ class App:
                     elif "SOLO" in nome_up:
                         tipo_sumario = "EM_SOLO"
                     elif "RESERVA" in nome_up or "EXPLORAR" in nome_up:
-                        tipo_sumario = "EXPLORAR_RESERVA"
+                        tipo_sumario = "RESERVA"
                     elif "REPOUSO" in nome_up:
                         tipo_sumario = "REPOUSO_EXTRA" if "EXTRA" in nome_up else "REPOUSO"
                     elif "PLANTAO" in nome_up or "PLANTÃO" in nome_up:
@@ -908,10 +922,15 @@ class App:
                         tipo_sumario = "DIARIAS"
                 
                 if tipo_sumario:
-                    if registro_formatado:
-                        novo_nome = f"{nome_formatado}_{registro_formatado}_SUMARIO_HORAS_{tipo_sumario}{periodo_suffix}_{timestamp}.pdf"
+                    if tipo_sumario == "DIARIAS":
+                        base_sumario_nome = "SUMARIO"
                     else:
-                        novo_nome = f"{nome_formatado}_SUMARIO_HORAS_{tipo_sumario}{periodo_suffix}_{timestamp}.pdf"
+                        base_sumario_nome = "SUMARIO_HORAS"
+
+                    if registro_formatado:
+                        novo_nome = f"{nome_formatado}_{registro_formatado}_{base_sumario_nome}_{tipo_sumario}{periodo_suffix}_{timestamp}.pdf"
+                    else:
+                        novo_nome = f"{nome_formatado}_{base_sumario_nome}_{tipo_sumario}{periodo_suffix}_{timestamp}.pdf"
                     
                     novo_nome = novo_nome.replace(" ", "_")
                     novo_path = arq.parent / novo_nome
@@ -940,6 +959,11 @@ class App:
         if csv_quarta and csv_quarta.exists():
             arquivos_enviar.append(csv_quarta)
 
+        # Buscar o CSV TEMPO_JORNADA para fazer upload
+        csvs_jornada = sorted(base_dir.glob("*_TEMPO_JORNADA*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if csvs_jornada and csvs_jornada[0].exists():
+            arquivos_enviar.append(csvs_jornada[0])
+
         # Buscar o PDF do Book Final para fazer upload
         book_final = self._encontrar_book_final(base_dir)
         if book_final and book_final.exists():
@@ -954,6 +978,12 @@ class App:
         pdfs_sumario = list(base_dir.glob("*.pdf"))
         for pdf in pdfs_sumario:
             if "SUMARIO" in pdf.name.upper() or "SUMÁRIO" in pdf.name.upper():
+                arquivos_enviar.append(pdf)
+
+        # Buscar relatórios comparativos gerados
+        pdfs_comparativos = list(base_dir.glob("RELATORIO_COMPARATIVO_*.pdf"))
+        for pdf in pdfs_comparativos:
+            if pdf.exists():
                 arquivos_enviar.append(pdf)
 
         # Evitar duplicados
@@ -972,9 +1002,17 @@ class App:
 
         self._log(f"[SUPABASE STORAGE] Total de {len(arquivos_unicos)} arquivo(s) localizado(s) para upload.")
         
+        mes_ano_subpasta = ""
+        csv_referencia = self._encontrar_csv_passo4() or self._encontrar_csv_passo3() or self._encontrar_csv_passo2() or self._encontrar_csv_gerado()
+        if csv_referencia:
+            m_data = re.search(r"(\d{2})(\d{2})(\d{4})_\d{8}", csv_referencia.name)
+            if m_data:
+                # MMYYYY (ex: 052026)
+                mes_ano_subpasta = f"{m_data.group(2)}{m_data.group(3)}"
+
         sucessos = 0
         for arq in arquivos_unicos:
-            if self._upload_para_supabase_storage(arq, nome_aero_pasta, re_aero_pasta):
+            if self._upload_para_supabase_storage(arq, nome_aero_pasta, re_aero_pasta, mes_ano_subpasta):
                 sucessos += 1
 
         self._log(f"[SUPABASE STORAGE] Uploads concluídos: {sucessos} de {len(arquivos_unicos)} arquivo(s) enviados.")
@@ -1010,15 +1048,78 @@ class App:
 
         self._log(f"[LIMPEZA] Auditoria_Calculos: {removidos} item(ns) removido(s), {erros} erro(s).")
 
+    def _verificar_e_gerar_relatorio_comparativo(self, dir_trabalho: Path):
+        """Busca pelas versões p e e da escala para o mesmo mês e gera o comparativo."""
+        try:
+            from collections import defaultdict
+            import re
+            
+            self._log("[COMPARATIVO] Verificando existência de escalas P e E para comparação...")
+            nome_aeronauta, re_aeronauta = self._extrair_nome_e_re_do_pdf_escala()
+            
+            arquivos_quarta = []
+            for f in dir_trabalho.glob("*_QUARTA_VERSAO*.csv"):
+                arquivos_quarta.append(f)
+                
+            pasta_arquivados = dir_trabalho / "Arquivos Processados"
+            if pasta_arquivados.exists():
+                for f in pasta_arquivados.rglob("*_QUARTA_VERSAO*.csv"):
+                    arquivos_quarta.append(f)
+                        
+            escalas_por_mes = defaultdict(dict)
+            
+            for f in arquivos_quarta:
+                base = f.name
+                m_tipo = re.search(r"(?i)^escala_([pe])_", base)
+                m_data = re.search(r"(\d{2})(\d{2})(\d{4})_\d{8}", base)
+                
+                if m_tipo and m_data:
+                    tipo = m_tipo.group(1).lower()
+                    mes_ano = f"{m_data.group(2)}{m_data.group(3)}"
+                    if tipo not in escalas_por_mes[mes_ano]:
+                        escalas_por_mes[mes_ano][tipo] = f
+                    else:
+                        if f.stat().st_mtime > escalas_por_mes[mes_ano][tipo].stat().st_mtime:
+                            escalas_por_mes[mes_ano][tipo] = f
+                            
+            script_comparativo = DIR_SCRIPTS / "RELATORIO COMPARATIVO ESCALAS.py"
+            if not script_comparativo.exists():
+                return
+                
+            for mes_ano, d in escalas_por_mes.items():
+                if 'p' in d and 'e' in d:
+                    # Gera o comparativo APENAS quando a escala Executada ('e') estiver sendo processada no momento.
+                    if d['e'].parent == dir_trabalho:
+                        self._log(f"[COMPARATIVO] Encontrado P e E para o mês {mes_ano}. Gerando relatório...")
+                        
+                        env_cmp = os.environ.copy()
+                        env_cmp["AERO_CSV_PLANEJADA"] = str(d['p'])
+                        env_cmp["AERO_CSV_EXECUTADA"] = str(d['e'])
+                        env_cmp["AERO_OUTPUT_DIR"] = str(dir_trabalho)
+                        
+                        ok = self._executar_script(script_comparativo, env_cmp)
+                        if ok:
+                            self._log(f"[COMPARATIVO] Relatório gerado com sucesso!")
+                        else:
+                            self._log(f"[COMPARATIVO] Falha ao gerar o relatório comparativo.")
+                            
+        except Exception as e:
+            self._log(f"[COMPARATIVO] Erro ao verificar comparativo: {e}")
+
     def _arquivar_arquivos_processados(self, base_dir: Path):
         """Move arquivos do diretório de trabalho para Arquivos Processados/data."""
         pasta_base = base_dir / "Arquivos Processados"
         pasta_base.mkdir(parents=True, exist_ok=True)
+        csv_referencia = self._encontrar_csv_passo4() or self._encontrar_csv_passo3() or self._encontrar_csv_passo2() or self._encontrar_csv_gerado()
+        data_proc = datetime.now().strftime("%d%m%Y") # Fallback
+        if csv_referencia:
+            import re
+            m_data = re.search(r"(\d{2})(\d{2})(\d{4})_\d{8}", csv_referencia.name)
+            if m_data:
+                # Usa MMYYYY (ex: 052026)
+                data_proc = f"{m_data.group(2)}{m_data.group(3)}"
 
-        data_proc = datetime.now().strftime("%d%m%Y")
         pasta_destino = pasta_base / data_proc
-        if pasta_destino.exists():
-            pasta_destino = pasta_base / f"{data_proc}_{datetime.now().strftime('%H%M%S')}"
         pasta_destino.mkdir(parents=True, exist_ok=True)
 
         movidos = 0
@@ -1070,7 +1171,7 @@ class App:
             destino_orquestrador = pasta_destino / origem_orquestrador.name
             if destino_orquestrador.exists():
                 destino_orquestrador = pasta_destino / f"{origem_orquestrador.stem}_{datetime.now().strftime('%H%M%S')}{origem_orquestrador.suffix}"
-            shutil.copy2(str(origem_orquestrador), str(destino_orquestrador))
+            # shutil.copy2(str(origem_orquestrador), str(destino_orquestrador))
             self._log(f"[ARQUIVAMENTO] Orquestrador copiado para: {destino_orquestrador}")
         except Exception as exc:
             self._log(f"[ARQUIVAMENTO] ⚠️ Falha ao copiar o orquestrador: {exc}")
@@ -1476,6 +1577,8 @@ class App:
                         self._log("[ENVIO] ⚠️ Sem destinatários válidos. Envio por e-mail não realizado.")
                 else:
                     self._log("[ENVIO] ⚠️ BOOK_FINAL não gerado. Envio do e-mail principal pulado.")
+                
+                self._verificar_e_gerar_relatorio_comparativo(dir_trabalho)
                 
                 # Envia todos os relatórios disponíveis (incluindo sumários e diárias) ao Supabase
                 self._enviar_relatorios_supabase(dir_trabalho, anexos_email)

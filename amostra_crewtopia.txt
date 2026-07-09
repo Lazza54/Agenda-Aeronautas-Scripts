@@ -1,0 +1,317 @@
+--- PÁGINA 1 ---
+                   
+                   
+                   
+                   
+                   
+    Tripulante:ITALOPINHEIRO
+        Apresentação:07:18
+    LA3350 GRU 08:11
+            SSA 10:24
+ Thu               
+ 28 LA3629 SSA 11:10
+            CGH 13:42
+ May               
+    LA3581 CGH 15:10
+            BSB 16:57
+     TérminodaJornada:17:27
+        Apresentação:12:55
+    LA3732 BSB 13:38
+            FOR 16:08
+ Fri               
+ 29 LA3743 FOR 17:03
+            BSB 19:50
+ May               
+    LA3894 BSB 21:10
+            CGB 22:54
+     TérminodaJornada:23:24
+        Apresentação:18:30
+    LA3271 CGB 18:57
+ Sat        GRU 21:12
+ 30                
+            GRU 23:48
+ May LA4522 PNZ 02:18
+               (31/5)
+     TérminodaJornada:02:48
+ Sun               
+ 31                
+ May               
+        Apresentação:03:45
+    LA3391 PNZ 04:03
+            GRU 06:46
+ Mon               
+ 01 LA4668 GRU 08:27
+            JOI 09:31
+ Jun               
+    LA4661 JOI 10:06
+            GRU 11:04
+     TérminodaJornada:11:34
+ Tue               
+ 02 CMA    GRU 06:30
+            GRU 12:00
+ Jun               
+ Wed        GRU 17:36
+ 03 DO     GRU 17:35
+ Jun           (4/6)
+ Thu        GRU 17:36
+ 04 DO     GRU 17:35
+ Jun           (5/6)
+ Fri        GRU 17:36
+ 05 DO     GRU 17:35
+ Jun           (6/6)
+    ASB    GRU 17:50
+            GRU 20:14
+        Apresentação:20:14
+ Sat               
+ 06 LA4672 GRU 20:14
+            GIG 21:15
+ Jun               
+    LA3674 GIG 21:55
+            SSA 23:49
+     TérminodaJornada:00:19
+        Apresentação:14:35
+    LA3647 SSA 15:21
+            GIG 17:35
+ Sun               
+ 07 LA3729 GIG 18:18
+            BSB 20:14
+ Jun               
+    LA3756 BSB 21:05
+            GYN 21:50
+     TérminodaJornada:22:20
+        Apresentação:11:50
+    LA4607 GYN 12:17
+            GRU 13:52
+ Mon               
+ 08 LA3744 GRU 16:45
+            AJU 19:13
+ Jun               
+    LA3745 AJU 19:58
+            GRU 22:44
+     TérminodaJornada:23:14
+        Apresentação:21:43
+ Tue        GRU 22:51
+ 09 LA3308 FLN 00:07
+ Jun           (10/6)
+     TérminodaJornada:00:37
+        Apresentação:14:45
+ Wed               
+    LA3303        
+            G      
+            FL     
+            R      
+             N     
+             U     
+               1   
+               1   
+                5  
+                7  
+                :  
+                :  
+                5  
+                0  
+                 0 
+                 3 
+ 10                
+ Jun LA3316 GRU 18:55
+            FOR 22:11
+     TérminodaJornada:22:41
+        Apresentação:13:45
+ Thu               
+    LA3525        
+            M      
+            FO     
+            A      
+             R     
+             O     
+               1   
+               1   
+                4  
+                7  
+                :  
+                :  
+                1  
+                3  
+                 4 
+                 7 
+ 11                
+ Jun LA3567 MAO 19:14
+            GRU 22:57
+     TérminodaJornada:23:27
+ Fri               
+ 12 OFF    GRU 20:59
+            GRU 23:59
+ Jun               
+ Sat               
+ 13 DOF    GRU 00:00
+            GRU 23:59
+ Jun               
+ Sun               
+ 14 DOF    GRU 00:00
+            GRU 23:59
+ Jun               
+    HSB    GRU 02:00
+            GRU 05:35
+        Apresentação:08:05
+ Mon               
+ 15 LA8048 GRU 09:05
+            COR 12:30
+ Jun               
+    LA8049 COR 13:20
+            GRU 16:25
+     TérminodaJornada:17:10
+        Apresentação:11:28
+    LA3822 GRU 12:20
+            XAP 14:00
+ Tue               
+ 16 LA3823 XAP 14:40
+            GRU 16:15
+ Jun               
+    LA3316 GRU 18:50
+            FOR 22:15
+     TérminodaJornada:22:45
+        Apresentação:13:50
+    LA3487 FOR 14:20
+            SSA 16:05
+ W                 
+ 1                 
+  e                
+  7                
+  d LA3809 S      
+            B      
+            S      
+            S      
+             A     
+             B     
+               1   
+               1   
+                7  
+                9  
+                :  
+                :  
+                4  
+                4  
+                 0 
+                 0 
+ Jun               
+            BSB 21:20
+    LA3750        
+            MAO 00:20
+               (18/6)
+     TérminodaJornada:00:50
+        Apresentação:18:50
+ Thu               
+ 18 LA3567 MAO 19:20
+            GRU 23:10
+ Jun               
+     TérminodaJornada:23:40
+ Fri               
+ 19 OFF    GRU 20:59
+            GRU 23:59
+ Jun               
+ Sat               
+ 20 DR     GRU 00:00
+            GRU 23:59
+ Jun               
+ Sun               
+ 21 DR     GRU 00:00
+            GRU 23:59
+ Jun               
+ Mon               
+ 22 DR     GRU 00:00
+            GRU 23:59
+ Jun               
+        Apresentação:09:55
+    LA4520 CGH 10:40
+      Extra IGU 12:25
+ Tue               
+    LA3482 IGU 13:05
+            CWB 14:15
+ 23                
+ Jun LA3481 CWB 14:55
+            IGU 16:10
+    LA3109 IGU 16:55
+            CGH 18:30
+     TérminodaJornada:19:00
+        Apresentação:16:23
+    LA3544 GRU 17:20
+            GYN 19:00
+ W                 
+ 2                 
+  e                
+  4                
+  d LA3131        
+            G      
+            G      
+            R      
+            YN     
+             U     
+               1   
+               2   
+                9  
+                1  
+                :  
+                :  
+                4  
+                2  
+                 5 
+                 5 
+ Jun               
+            GRU 22:45
+    LA3426        
+            POA 00:30
+               (25/6)
+     TérminodaJornada:01:00
+        Apresentação:13:50
+    LA3421 POA 14:20
+      Extra GRU 16:05
+ Thu               
+    LA4550 GRU 17:40
+            CWB 18:40
+ 25                
+ Jun LA3291 CWB 19:30
+            GRU 20:45
+    LA3206 GRU 22:10
+            IGU 23:55
+     TérminodaJornada:00:25
+        Apresentação:14:15
+ Fri               
+    LA3879        
+            G      
+            IG     
+            R      
+             U     
+             U     
+               1   
+               1   
+                4  
+                6  
+                :  
+                :  
+                5  
+                3  
+                 0 
+                 5 
+ 26                
+ Jun LA3562 GRU 18:50
+            MAO 22:45
+     TérminodaJornada:23:15
+        Apresentação:12:05
+    LA3469 MAO 12:40
+            GRU 16:35
+ Sat               
+ 27 LA3790 GRU 18:10
+            CNF 19:20
+ Jun               
+    LA3557 CNF 20:20
+            GRU 21:40
+     TérminodaJornada:22:10
+ Sun        GRU 13:10
+ 28 DO     GRU 13:09
+ Jun           (29/6)
+ Mon        GRU 13:10
+ 29 DO     GRU 13:09
+ Jun           (30/6)
+ Tue        GRU 13:10
+ 30 DO     GRU 13:09
+ Jun           (1/7)

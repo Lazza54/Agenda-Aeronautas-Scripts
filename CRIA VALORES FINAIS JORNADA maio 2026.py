@@ -21,7 +21,7 @@ if MODO_AUTOMATICO:
 # ATENÇÃO: VERIFIQUE E AJUSTE ESTE CAMINHO CONFORME SEU AMBIENTE
 # Este é o diretório onde os arquivos JSON e Excel de apoio devem estar localizados.
 # Se este caminho estiver incorreto, o script não encontrará os arquivos de apoio.
-BASE_COMMON_FILES_PATH = r'R:\SPECTRUM_SYSTEM\Aeronautas\Documentos_Comuns\Arquivos_Diversos'
+BASE_COMMON_FILES_PATH = r'R:\\SPECTRUM_SYSTEM\\Aeronautas\\Documentos_Comuns\\Arquivos_Diversos'
 
 def _arquivo_entrada_eh_latam() -> bool:
     candidatos = [
@@ -49,33 +49,10 @@ def _resolver_json_apoio(file_name: str) -> list[str]:
     existentes = [c for c in candidatos if os.path.exists(c)]
     return existentes if existentes else [candidatos[-1]]
 
-import unicodedata
-def _normalizar_texto(valor) -> str:
-    if valor is None: return ''
-    txt = str(valor).strip().upper()
-    txt = unicodedata.normalize('NFKD', txt)
-    return ''.join(ch for ch in txt if not unicodedata.combining(ch))
-
-def _carregar_atividades_pagas_regras_voo_latam():
-    file_path = os.path.join(BASE_COMMON_FILES_PATH, 'AtividadesEscalaLATAM.json')
-    if not os.path.exists(file_path): return set()
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except: return set()
-
-    atividades = data.get('atividades', []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
-    tokens = set()
-    for entry in atividades:
-        if isinstance(entry, dict) and entry.get("atividade paga", "").strip().upper() == "S" and entry.get("segue regras do voo", "").strip().upper() == "S":
-            c = _normalizar_texto(entry.get('codigo_iflight_neo', ''))
-            if c: tokens.add(c)
-    return tokens
-
 def gerar_nome_csv_saida_base(nome_csv_entrada: str) -> str:
     """
     Gera o nome base do arquivo CSV de saída (sem timestamp), substituindo sufixos de etapas anteriores
-    por '_REPOUSO'.
+    por '_TEMPO_JORNADA'.
     """
     base_nome = os.path.basename(nome_csv_entrada)
     nome_sem_ext, _ = os.path.splitext(base_nome)
@@ -93,10 +70,10 @@ def gerar_nome_csv_saida_base(nome_csv_entrada: str) -> str:
     cleaned_name = re.sub(timestamp_pattern, '', cleaned_name)
 
     # Garante que o nome termine com o sufixo correto para esta etapa
-    if not cleaned_name.endswith('_REPOUSO'):
-        return f"{cleaned_name}_REPOUSO.csv"
+    if not cleaned_name.endswith('_TEMPO_JORNADA'):
+        return f"{cleaned_name}_TEMPO_JORNADA.csv"
     
-    return f"{cleaned_name}.csv" # Caso já termine com _REPOUSO
+    return f"{cleaned_name}.csv" # Caso já termine com _TEMPO_JORNADA
 
 def determinar_diretorio_e_arquivo():
     """
@@ -148,7 +125,7 @@ def parse_date_from_excel_serial(serial_value):
 def load_json_to_set(file_name: str, type_expected: str = 'string') -> set:
     """
     Carrega um arquivo JSON e tenta extrair um conjunto de valores.
-    'type_expected' pode ser 'string' (para tipos_voo) ou 'date' (para feriados).
+    'type_expected' pode ser 'string' (para tipos_voo/folgas) ou 'date' (para feriados).
     """
     file_candidates = _resolver_json_apoio(file_name)
     data = None
@@ -330,32 +307,30 @@ def get_interval_overlap_with_repeating_period(event_start_dt: datetime, event_e
 # Função generalizada para calcular durações de atividade principal e pagamento
 def calculate_main_activity_and_payment_durations(activity_start_dt: datetime, activity_end_dt: datetime, holidays_set: set) -> tuple:
     """
-    Calcula os tempos diurnos/noturnos (normais e especiais) para Repouso e Pagamento
-    de um determinado intervalo (activity_start_dt, activity_end_dt).
+    Calcula os tempos diurnos/noturnos (normais e especiais) para uma atividade principal
+    (definida por activity_start_dt e activity_end_dt) e para Pagamento.
     
     Períodos especiais (total 24h):
     - Sábado: 21:00 sáb → 18:00 dom (21h)
     - Domingo: 18:00 dom → 21:00 dom (3h)
     - Véspera feriado: 21:00 véspera → 18:00 feriado (21h)
     - Feriado: 18:00 feriado → 21:00 feriado (3h)
-    
-    Segue a mesma lógica de calculate_apresentacao_and_payment_durations do CRIA VALORES FINAIS APRESENTACAO.
     """
     # Retorna zeros se as datas são inválidas ou o intervalo é zero/negativo
     if pd.isna(activity_start_dt) or pd.isna(activity_end_dt) or activity_start_dt >= activity_end_dt:
-        return (timedelta(0),) * 8
+        return (timedelta(0),) * 8 # 4 para atividade principal, 4 para pagamento
 
-    # Duração total do evento (activity_start_dt ao activity_end_dt)
-    total_event_duration = activity_end_dt - activity_start_dt
+    # Duração total da atividade principal (ex: Tempo Jornada, Apresentacao, Tempo Solo)
+    total_main_activity_duration = activity_end_dt - activity_start_dt
 
-    # --- Cálculo de Tempos Diurno/Noturno Padrão ---
-    # Repouso: Noturno 18:00 - 06:00
+    # --- Cálculo de Tempos Diurno/Noturno Padrão para a Atividade Principal ---
+    # Atividade Principal (Tempo Jornada): Noturno 18:00 - 06:00
     main_activity_night_total = get_interval_overlap_with_repeating_period(activity_start_dt, activity_end_dt, 18, 0, 6, 0)
-    main_activity_day_total = total_event_duration - main_activity_night_total
+    main_activity_day_total = total_main_activity_duration - main_activity_night_total
 
     # Pagamento: Noturno 21:00 - 09:00
     pay_night_total = get_interval_overlap_with_repeating_period(activity_start_dt, activity_end_dt, 21, 0, 9, 0)
-    pay_day_total = total_event_duration - pay_night_total
+    pay_day_total = total_main_activity_duration - pay_night_total
 
     # --- Cálculo de Tempos Diurno/Noturno Especiais ---
     main_activity_special_day = timedelta(0)
@@ -363,7 +338,7 @@ def calculate_main_activity_and_payment_durations(activity_start_dt: datetime, a
     pay_special_day = timedelta(0)
     pay_special_night = timedelta(0)
 
-    # Itera minuto a minuto para precisão absoluta (necessário para cálculos trabalhistas)
+    # Itera minuto a minuto para verificar se cada momento é especial
     current_dt = activity_start_dt
     while current_dt < activity_end_dt:
         next_dt = current_dt + timedelta(minutes=1)
@@ -405,7 +380,7 @@ def calculate_main_activity_and_payment_durations(activity_start_dt: datetime, a
         
         # Se for especial, acumula nos contadores especiais
         if eh_especial:
-            # Repouso: verificar se é noturno (18:00-06:00)
+            # Atividade Principal: verificar se é noturno (18:00-06:00)
             if current_hour >= 18 or current_hour < 6:
                 main_activity_special_night += delta
             else:
@@ -453,26 +428,18 @@ def processar_dados_aeronautica():
         return
 
     # --- 2. Carregar e Preparar Dados de Apoio ---
-    print("Carregando arquivos de apoio (tipos_voo.json, tipos_plantao.json, tipos_reserva.json, tipos_treinamentos.json, folgas.json, feriados.json)...")
+    print("Carregando arquivos de apoio (folgas_json, feriados.json)...\n")
     try:
-        tipos_voo_data = load_json_to_set('tipos_voo.json', type_expected='string')
-        tipos_plantao_data = load_json_to_set('tipos_plantao.json', type_expected='string')
-        tipos_reserva_data = load_json_to_set('tipos_reserva.json', type_expected='string')
-        tipos_treinamentos_data = load_json_to_set('tipos_treinamentos.json', type_expected='string')
+        # Carrega folgas.json para filtragem EXCLUSIVA (strings normalizadas)
         folgas_data = load_json_to_set('folgas.json', type_expected='string')
-        feriados_data = load_json_to_set('feriados.json', type_expected='date')
+        if not folgas_data:
+            print("Aviso: 'folgas.json' carregado mas está vazio ou não contém dados válidos. O filtro de atividades de folga não será aplicado.\n")
         
-        # Combinar todos os tipos válidos para retomada de cálculo
-        tipos_validos = set()
-        if tipos_voo_data:
-            tipos_validos.update(tipos_voo_data)
-        if tipos_plantao_data:
-            tipos_validos.update(tipos_plantao_data)
-        if tipos_reserva_data:
-            tipos_validos.update(tipos_reserva_data)
-        if tipos_treinamentos_data:
-            tipos_validos.update(tipos_treinamentos_data)
-            
+        # Carrega feriados.json para os cálculos de "Especial" (datas como objetos datetime.date)
+        feriados_data = load_json_to_set('feriados.json', type_expected='date')
+        if not feriados_data:
+            print("Aviso: 'feriados.json' carregado mas está vazio ou não contém dados válidos. Cálculos de tempo especial podem ser afetados.\n")
+        
     except Exception as e:
         print(f"Erro ao carregar arquivos de apoio: {e}")
         return
@@ -514,7 +481,6 @@ def processar_dados_aeronautica():
         df.rename(columns=rename_dict, inplace=True)
 
         # Garante que as colunas essenciais para o processamento existam com os nomes internos
-        # 'end' e 'start' são cruciais para esta nova tarefa de Tempo Solo
         required_internal_cols = ['activity', 'id_leg', 'checkin', 'start', 'dep', 'arr', 'end', 'checkout']
         if not all(col in df.columns for col in required_internal_cols):
             missing_cols = [col for col in required_internal_cols if col not in df.columns]
@@ -526,10 +492,10 @@ def processar_dados_aeronautica():
         print(f"ERRO: Erro ao ler o arquivo CSV ou processar colunas: {e}")
         return
 
-    print("CSV lido com sucesso e colunas normalizadas para processamento.")
+    print("CSV lido com sucesso e colunas normalizadas para processamento.\n")
 
     # --- 4. Otimização de Tipos de Dados e Conversão de Data/Hora ---
-    print("Otimizando tipos de dados e convertendo colunas de data/hora...")
+    print("Otimizando tipos de dados e convertendo colunas de data/hora...\n")
 
     # Otimizar tipos de colunas para reduzir tamanho em memória
     # Colunas com strings repetitivas
@@ -538,7 +504,7 @@ def processar_dados_aeronautica():
             df[col] = df[col].astype('category')
     
     # Converter colunas de data/hora para o formato datetime
-    datetime_internal_cols = ['checkin', 'start', 'end', 'checkout'] # Dep e Arr NÃO estão aqui, pois não são datas
+    datetime_internal_cols = ['checkin', 'start', 'end', 'checkout'] 
     for col in datetime_internal_cols:
         if col in df.columns:
             def parse_dt_value(val):
@@ -560,13 +526,19 @@ def processar_dados_aeronautica():
                                '%H:%M:%S', '%m/%d/%Y %H:%M:%S', '%Y-%m-%d']
                     for fmt in formats:
                         try:
-                            # Usa datetime.strptime para todos os formatos
-                            parsed_dt = datetime.strptime(str(val), fmt)
-                            return parsed_dt
+                            # Se for apenas hora, combina com uma data padrão para permitir cálculos
+                            if fmt in ['%H:%M:%S', '%H:%M']:
+                                parsed_time = datetime.strptime(str(val), fmt).time()
+                                # Para o propósito de cálculo de duração, a data em si pode ser arbitrária,
+                                # mas precisa ser consistente para o intervalo.
+                                # Usaremos 1900-01-01 como base se não houver data explícita.
+                                return datetime.combine(date(1900,1,1), parsed_time)
+                            else:
+                                return pd.to_datetime(str(val), format=fmt)
                         except ValueError:
                             continue
                     # Fallback para inferir formato
-                    return pd.to_datetime(str(val), errors='coerce')
+                    return pd.to_datetime(str(val), infer_datetime_format=True, errors='coerce')
                 except (ValueError, TypeError):
                     return pd.NaT # Falha total na conversão
             
@@ -574,81 +546,61 @@ def processar_dados_aeronautica():
         else:
             df[col] = pd.NaT # Cria a coluna como NaT se não existir
 
-    print("Colunas de data/hora convertidas.")
-    print("Amostra de colunas de tempo após conversão:")
+    print("Colunas de data/hora convertidas.\n")
+    print("Amostra de colunas de tempo após conversão:\n")
     print(df[['checkin', 'start', 'end', 'checkout']].head().to_string())
+    print("\n")
 
-    # --- 5. Filtragem por tipos válidos E Id_Leg ---
+    # --- 5. Filtragem por Exclusão (folgas_json) e Inclusão (Id_Leg) ---
     initial_row_count = len(df)
     
-    # Função para verificar se Activity inicia com tipos válidos
-    def activity_starts_with_valid_tipos(activity_str):
-        if pd.isna(activity_str) or not tipos_validos:
-            return False
-        activity_clean = str(activity_str).strip().upper()
-        return any(activity_clean.startswith(tipo) for tipo in tipos_validos)
+    # NOVO: Extrair o código completo da atividade para o filtro, não apenas os dois primeiros caracteres
+    def extract_full_activity_code_for_filter(activity_str):
+        if pd.isna(activity_str):
+            return None
+        # Retorna a string da atividade, removendo espaços e convertendo para maiúsculas
+        return str(activity_str).strip().upper()
+
+    df['activity_for_filter'] = df['activity'].apply(extract_full_activity_code_for_filter)
+
+    # Condição de Exclusão (Activity): Excluir 'activity_for_filter' que estão em 'folgas_data'
+    if folgas_data:
+        # A condição é TRUE para linhas que *não* estão em folgas_data (i.e., devem ser MANTIDAS)
+        activity_exclude_condition = ~df['activity_for_filter'].isin(folgas_data)
+        excluded_by_activity_count = len(df) - activity_exclude_condition.sum()
+        print(f"Filtrando atividades que estão em folgas_json. {excluded_by_activity_count} linhas serão potencialmente excluídas por 'Activity'.")
+    else: # Se folgas_data estiver vazio, não exclui nada por activity
+        activity_exclude_condition = pd.Series(True, index=df.index)
+        print("Nenhum dado em 'folgas.json' para aplicar o filtro por 'Activity'.")
     
-    # Função para verificar se Activity inicia com folga
-    def activity_starts_with_folga(activity_str):
-        if pd.isna(activity_str) or not folgas_data:
-            return False
-        activity_clean = str(activity_str).strip().upper()
-        return any(activity_clean.startswith(folga) for folga in folgas_data)
-
-    # Condição 1: 'activity' deve iniciar com tipos válidos OU folgas
-    activity_filter_condition = df['activity'].apply(lambda x: activity_starts_with_valid_tipos(x) or activity_starts_with_folga(x))
+    # Condição de Inclusão (Id_Leg): Manter 'Id_Leg' que são '-IF' ou '-F'
+    id_leg_include_values = ['-IF', '-F'] # Estes são os valores que devem ser MANTIDOS
+    df['id_leg_clean'] = df['id_leg'].astype(str).str.strip() # Limpa espaços em branco para comparação
+    id_leg_include_condition = df['id_leg_clean'].isin(id_leg_include_values) # Agora esta condição significa 'É em IF ou F'
     
-    # Condição 2: 'id_leg' deve terminar com '-F' ou '-IF' (INCLUSÃO NO DATAFRAME)
-    id_leg_filter_condition_for_inclusion = df['id_leg'].notna() & df['id_leg'].astype(str).str.endswith(('-F', '-IF'))
+    excluded_by_id_leg_count = len(df) - id_leg_include_condition.sum()
+    print(f"Filtrando Id_Leg que *não* são '-IF' ou '-F'. {excluded_by_id_leg_count} linhas serão potencialmente excluídas por 'Id_Leg'.")
 
-    nome_arquivo_upper = os.path.basename(input_csv_path).upper()
-    cond_latam_json = pd.Series(False, index=df.index)
-    if "LATAM" in nome_arquivo_upper:
-        atividade_voo_latam = (
-            df['activity']
-            .astype(str)
-            .str.strip()
-            .str.upper()
-            .str.match(r'^[A-Z]{2,3}\d{2,5}[A-Z]?$', na=False)
-        )
-        latam_paid_flight_activities = _carregar_atividades_pagas_regras_voo_latam()
-        cond_latam_json = df['activity'].astype(str).str.strip().str.upper().isin(latam_paid_flight_activities)
-        activity_filter_condition = activity_filter_condition | atividade_voo_latam | cond_latam_json
 
-    # Ajustar o filtro de id_leg para não remover atividades do JSON LATAM que não tenham -F ou -IF
-    id_leg_filter_condition_for_inclusion = id_leg_filter_condition_for_inclusion | cond_latam_json
-
-    # Combina as duas condições para incluir as linhas no DataFrame de saída
-    if tipos_validos or folgas_data or "LATAM" in nome_arquivo_upper:
-        df_processed = df[activity_filter_condition & id_leg_filter_condition_for_inclusion].copy()
-        print(f"Total de linhas lidas: {initial_row_count}. Linhas após filtrar por tipos válidos/folgas/LATAM E Id_Leg: {len(df_processed)}")
-
-        if initial_row_count - len(df_processed) > 0:
-            print(f"{initial_row_count - len(df_processed)} linhas foram removidas (não atendem aos critérios de filtro).")
-        else:
-            print("Todas as linhas atendem aos critérios de filtro.")
+    # Combina as duas condições: (NÃO está em folgas_json) E (É em ['-IF', '-F'])
+    # Ambas as condições devem ser TRUE para a linha ser mantida.
+    df_processed = df[activity_exclude_condition & id_leg_include_condition].copy()
+    
+    print(f"Total de linhas lidas: {initial_row_count}. Linhas após filtros de exclusão/inclusão: {len(df_processed)}\n")
+    if initial_row_count - len(df_processed) > 0:
+        print(f"{initial_row_count - len(df_processed)} linhas foram removidas pelos filtros.\n")
     else:
-        df_processed = df[id_leg_filter_condition_for_inclusion].copy()
-        print(f"Aviso: Dados de tipos ausentes/vazios. Filtragem aplicada apenas por Id_Leg. Total de linhas lidas: {initial_row_count}. Linhas após filtrar por Id_Leg: {len(df_processed)}")
+        print("Todas as linhas atendem aos critérios de filtro (nenhuma remoção adicional por filtro).\n")
 
-    # --- 6. Calcular Tempo Repouso e as 8 Novas Colunas (Tempo Repouso e Pagamento) ---
-    print("Calculando Tempo de Repouso e os novos tempos de pagamento...")
 
-    # --- Passo especial para Tempo Repouso: Ordenar e Obter dados da Próxima Linha ---
-    # Assegura que os dados estão ordenados por 'checkout' para obter corretamente a próxima linha
-    df_processed = df_processed.sort_values(by=['checkout']).reset_index(drop=True)
-    
-    # Normalizar Id_Leg e Activity seguindo o padrão do CALCULOS VALORES INICIAIS 22082025 PASSO 4
-    df_processed['id_leg_norm'] = df_processed['id_leg'].astype(str).str.strip().str.upper()
-    
-    # Extrair o prefixo alfabético da Activity para Activity_Norm
-    # Isso vai transformar 'AD5046' em 'AD', 'FR' em 'FR', etc.
-    df_processed['activity_norm'] = df_processed['activity'].astype(str).str.upper().str.extract(r'^([A-Z]+)', expand=False)
-    # Para casos onde a atividade não começa com letras, usamos a Activity original em maiúsculas
-    df_processed['activity_norm'] = df_processed['activity_norm'].fillna(df_processed['activity'].astype(str).str.upper())
-    
-    # Inicializa colunas de tempo repouso e pagamento com zero
-    df_processed['tempo_repouso_total'] = pd.Timedelta(0) 
+    # Remova as colunas temporárias
+    df_processed.drop(columns=['activity_for_filter', 'id_leg_clean'], inplace=True, errors='ignore')
+
+    # --- 6. Calcular Tempo Jornada e as 8 Novas Colunas (Tempo Jornada e Pagamento) ---
+    print("Calculando Tempo Jornada e os novos tempos de pagamento...\n")
+
+    # Inicializa colunas de tempo jornada e pagamento com zero
+    df_processed['tempo_jornada_total'] = pd.Timedelta(0) 
     new_internal_calculated_columns = [
         'main_activity_day_total', 'main_activity_night_total',
         'main_activity_special_day', 'main_activity_special_night',
@@ -658,56 +610,50 @@ def processar_dados_aeronautica():
     for col in new_internal_calculated_columns:
         df_processed[col] = pd.Timedelta(0) 
 
-    # --- Cálculo de Tempo Repouso seguindo CALCULOS VALORES INICIAIS 22082025 PASSO 4 ---
-    # Tempo Repouso = Checkin da próxima linha - Checkout da linha atual
-    # Condição: Id_Leg_Norm in ['-IF', '-F'] AND Activity_Norm NOT in folgas
-    df_processed['checkin_next_leg'] = df_processed['checkin'].shift(-1)
-    
-    cond_repouso = (
-        df_processed['id_leg_norm'].isin(['-IF', '-F']) & 
-        (~df_processed['activity_norm'].isin(folgas_data))
+    # Máscara para as linhas onde o CÁLCULO do Tempo Jornada é válido
+    # Deve haver Checkin e Checkout válidos, e Checkout deve ser maior que Checkin
+    # pois a jornada começa com o Checkin e termina com o Checkout.
+    mask_for_valid_jornada_calc = (
+        df_processed['checkout'].notna() & 
+        df_processed['checkin'].notna() & 
+        (df_processed['checkout'] > df_processed['checkin']) # CORRIGIDO: Checkout deve ser > Checkin para duração positiva
     )
     
-    print(f"Linhas que atendem condição para cálculo de Repouso: {cond_repouso.sum()}")
+    # Preenche o 'tempo_jornada_total' para as linhas válidas
+    df_processed.loc[mask_for_valid_jornada_calc, 'tempo_jornada_total'] = \
+        df_processed.loc[mask_for_valid_jornada_calc, 'checkout'] - df_processed.loc[mask_for_valid_jornada_calc, 'checkin']
     
-    # Calcula o Tempo Repouso para as linhas válidas
-    df_processed['tempo_repouso_total'] = pd.Timedelta(0)
-    tempo_repouso_calculated = df_processed.loc[cond_repouso, 'checkin_next_leg'] - df_processed.loc[cond_repouso, 'checkout']
-    df_processed.loc[cond_repouso, 'tempo_repouso_total'] = tempo_repouso_calculated
+    # Extrai o subset do DataFrame para o cálculo, garantindo o índice correto
+    df_for_calc = df_processed.loc[mask_for_valid_jornada_calc]
+
+    # Aplica a função de cálculo para Tempo Jornada detalhado e Pagamento, coletando os resultados
+    calculated_values = []
+    for index, row in df_for_calc.iterrows():
+        # Passa checkin como start_dt e checkout como end_dt
+        calculated_values.append(calculate_main_activity_and_payment_durations(row['checkin'], row['checkout'], feriados_data))
+
+    # Cria um DataFrame a partir dos valores calculados, utilizando o índice do subset original
+    results = pd.DataFrame(calculated_values, index=df_for_calc.index, columns=new_internal_calculated_columns)
     
-    # Aplica a função de cálculo para Tempo Repouso detalhado e Pagamento, APENAS para as linhas válidas
-    # 'results' será um DataFrame com as 8 colunas calculadas
-    if cond_repouso.any():
-        results = df_processed.loc[cond_repouso].apply(
-            lambda row: calculate_main_activity_and_payment_durations(row['checkout'], row['checkin_next_leg'], feriados_data), 
-            axis=1,
-            result_type='expand' 
-        )
-
-        results.columns = new_internal_calculated_columns
-
-        # Atribui os resultados de volta ao DataFrame principal para as linhas correspondentes
-        df_processed.loc[cond_repouso, new_internal_calculated_columns] = results
-    else:
-        print("Aviso: nenhuma linha válida para cálculo detalhado de repouso/pagamento.")
+    # Atribui os resultados de volta ao DataFrame principal para as linhas correspondentes
+    # Usando o índice de `results` (que é o mesmo de `df_for_calc`) garante o alinhamento
+    df_processed.loc[results.index, new_internal_calculated_columns] = results
 
     # Garante que todas as colunas calculadas sejam Timedelta e preenche NaT com 0s
-    df_processed['tempo_repouso_total'] = pd.to_timedelta(df_processed['tempo_repouso_total'], errors='coerce').fillna(pd.Timedelta(0))
     for col in new_internal_calculated_columns:
         df_processed[col] = pd.to_timedelta(df_processed[col], errors='coerce').fillna(pd.Timedelta(0))
 
-    # Remove as colunas temporárias
-    df_processed.drop(columns=['checkin_next_leg', 'id_leg_norm', 'activity_norm'], inplace=True, errors='ignore')
-
-    print("Cálculos concluídos.")
+    print("Cálculos concluídos.\n")
 
     # --- 7. Preparar DataFrame para Saída (Ordem Corrigida e Novos Nomes) ---
     # Define as colunas desejadas no CSV de saída com seus nomes exatos e na ordem correta
     final_output_columns_pascal_case = [
         'Activity', 'Id_Leg', 'Checkin', 'Start', 'Dep', 'Arr', 'End', 'Checkout', 
-        'Tempo Repouso', # Nova coluna total de Tempo Repouso
-        'Tempo Repouso Diurno', 'Tempo Repouso Noturno',
-        'Tempo Repouso Especial Diurno', 'Tempo Repouso Especial Noturno'
+        'Tempo Jornada', # Nova coluna total de Tempo Jornada
+        'Tempo Jornada Diurno', 'Tempo Jornada Noturno',
+        'Tempo Jornada Especial Diurno', 'Tempo Jornada Especial Noturno',
+        'Pagamento Diurno', 'Pagamento Noturno',
+        'Pagamento Especial Diurno', 'Pagamento Especial Noturno'
     ]
 
     # Mapeamento de nomes internos (snake_case) para nomes de saída (PascalCase)
@@ -715,11 +661,15 @@ def processar_dados_aeronautica():
         'activity': 'Activity', 'id_leg': 'Id_Leg', 'checkin': 'Checkin',
         'start': 'Start', 'end': 'End', 'dep': 'Dep', 'arr': 'Arr',
         'checkout': 'Checkout',
-        'tempo_repouso_total': 'Tempo Repouso', # Mapeamento para a nova coluna total de Tempo Repouso
-        'main_activity_day_total': 'Tempo Repouso Diurno', # Mapeia de generic para Tempo Repouso
-        'main_activity_night_total': 'Tempo Repouso Noturno', # Mapeia de generic para Tempo Repouso
-        'main_activity_special_day': 'Tempo Repouso Especial Diurno', # Mapeia de generic para Tempo Repouso
-        'main_activity_special_night': 'Tempo Repouso Especial Noturno' # Mapeia de generic para Tempo Repouso
+        'tempo_jornada_total': 'Tempo Jornada', # Mapeamento para a nova coluna total de Tempo Jornada
+        'main_activity_day_total': 'Tempo Jornada Diurno', 
+        'main_activity_night_total': 'Tempo Jornada Noturno', 
+        'main_activity_special_day': 'Tempo Jornada Especial Diurno', 
+        'main_activity_special_night': 'Tempo Jornada Especial Noturno', 
+        'pay_day_total': 'Pagamento Diurno',
+        'pay_night_total': 'Pagamento Noturno',
+        'pay_special_day': 'Pagamento Especial Diurno',
+        'pay_special_night': 'Pagamento Especial Noturno'
     }
 
     # Criar um DataFrame de saída vazio com as colunas na ordem desejada
@@ -739,15 +689,15 @@ def processar_dados_aeronautica():
                 df_output[output_col] = '' # Ou np.nan, dependendo do que for mais apropriado
 
     # Debugging: Print dtypes before formatting
-    print("\n--- dtypes of df_output before final formatting ---")
+    print("\n--- dtypes of df_output before final formatting ---\n")
     print(df_output.dtypes)
     print("---------------------------------------------------\n")
 
     # Formatar colunas Timedelta para string 'HH:MM:SS' ou 'D days HH:MM:SS'
     timedelta_cols_for_format = [
-        'Tempo Repouso', 
-        'Tempo Repouso Diurno', 'Tempo Repouso Noturno',
-        'Tempo Repouso Especial Diurno', 'Tempo Repouso Especial Noturno',
+        'Tempo Jornada', 
+        'Tempo Jornada Diurno', 'Tempo Jornada Noturno',
+        'Tempo Jornada Especial Diurno', 'Tempo Jornada Especial Noturno',
         'Pagamento Diurno', 'Pagamento Noturno',
         'Pagamento Especial Diurno', 'Pagamento Especial Noturno'
     ]
@@ -763,13 +713,12 @@ def processar_dados_aeronautica():
             df_output[col] = df_output[col].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
 
     # --- IMPRIMIR AS PRIMEIRAS 5 LINHAS DO DATAFRAME FINAL ---
-    print("\n--- Primeiras 5 linhas do DataFrame FINAL com colunas calculadas e formatadas ---")
+    print("\n--- Primeiras 5 linhas do DataFrame FINAL com colunas calculadas e formatadas ---\n")
     display_cols_example = [col for col in final_output_columns_pascal_case if col in df_output.columns]
     print(df_output[display_cols_example].head(5).to_string())
-    print("---------------------------------------------------------------\n")
+    print("\n---------------------------------------------------------------\n")
 
     # --- 8. Salvamento do Arquivo CSV de Saída ---
-    # Preparar nome do arquivo de saída
     base_output_filename = gerar_nome_csv_saida_base(input_csv_path) 
     timestamp = datetime.now().strftime("%d%m%Y_%H%M%S") 
     
@@ -779,25 +728,14 @@ def processar_dados_aeronautica():
     
     output_file_path = os.path.join(output_dir, output_filename_with_timestamp)
 
-    # Verificar se não há dados e exibir mensagem apropriada
-    if df_processed.empty and not tipos_voo_data:
-        messagebox.showinfo("Processamento Concluído", "Nenhuma linha foi processada, pois 'tipos_voo.json' está vazio ou não possui atividades para inclusão.\n\nO arquivo CSV será criado apenas com cabeçalhos.")
-        print("Nenhuma linha foi processada, pois 'tipos_voo.json' está vazio ou não possui atividades para inclusão.")
-        print("O arquivo CSV será criado apenas com cabeçalhos.\n")
-    elif df_processed.empty:
-        messagebox.showinfo("Processamento Concluído", "Nenhuma linha foi processada após a aplicação dos filtros.\n\nO arquivo CSV será criado apenas com cabeçalhos.")
-        print("Nenhuma linha foi processada após a aplicação dos filtros.")
-        print("O arquivo CSV será criado apenas com cabeçalhos.\n")
-
-    # Salvar o arquivo CSV (mesmo que vazio, com apenas cabeçalhos)
     try:
         df_output.to_csv(output_file_path, index=False, encoding='utf-8-sig')
-        print(f"Arquivo '{output_filename_with_timestamp}' salvo com sucesso em: {output_file_path}")
+        print(f"Arquivo '{output_filename_with_timestamp}' salvo com sucesso em: {output_file_path}\n")
         messagebox.showinfo("Sucesso", f"Processamento concluído! Arquivo salvo em:\n{output_file_path}")
     except Exception as e:
         messagebox.showerror("Erro ao Salvar", f"Erro ao salvar o arquivo CSV de saída: {e}\n"
                                                "Verifique se você tem permissão de escrita no diretório selecionado e se o arquivo não está aberto.")
-        print(f"ERRO: Erro ao salvar o arquivo CSV de saída: {e}")
+        print(f"ERRO: Erro ao salvar o arquivo CSV de saída: {e}\n")
 
 # --- Execução do Script ---
 if __name__ == "__main__":
@@ -806,4 +744,4 @@ if __name__ == "__main__":
     except Exception as e:
         messagebox.showerror("Erro Inesperado", f"Ocorreu um erro inesperado: {e}\n"
                                                  "Verifique a saída do console para mais detalhes.")
-        print(f"ERRO INESPERADO NA EXECUÇÃO PRINCIPAL: {e}")
+        print(f"ERRO INESPERADO NA EXECUÇÃO PRINCIPAL: {e}\n")

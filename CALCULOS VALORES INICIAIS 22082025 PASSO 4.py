@@ -120,6 +120,25 @@ def _carregar_regras_treinamento_latam():
     print(f"INFO: Catálogo LATAM carregado para treinamento. tokens_catalogo={len(tokens_catalogo)} | tokens_treinamento={len(tokens_treinamento)}")
     return tokens_catalogo, tokens_treinamento
 
+def _carregar_atividades_pagas_regras_voo_latam():
+    """
+    Retorna tokens (codigo_iflight_neo) das atividades LATAM com "atividade paga": "S" e "segue regras do voo": "S".
+    """
+    file_path = _resolver_json_apoio(ATIVIDADES_ESCALA_LATAM_FILE)
+    if not os.path.exists(file_path): return set()
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except: return set()
+
+    atividades = data.get('atividades', []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+    tokens = set()
+    for entry in atividades:
+        if isinstance(entry, dict) and entry.get("atividade paga", "").strip().upper() == "S" and entry.get("segue regras do voo", "").strip().upper() == "S":
+            c = _normalizar_texto(entry.get('codigo_iflight_neo', ''))
+            if c: tokens.add(c)
+    return tokens
+
 def gerar_nome_csv_saida(nome_csv_entrada: str) -> str:
     """
     Gera o nome do arquivo CSV de saída no padrão:
@@ -389,9 +408,15 @@ def processar_dados_aeronautica():
             if col in df.columns:
                 df[col] = df[col].astype(str)
 
-        linhas_inicial = len(df)
+        df['__original_index__'] = df.index
+        
+        is_empty_activity = df['Activity'].isna() | (df['Activity'].astype(str).str.strip() == '')
+        df_empty = df[is_empty_activity].copy()
+        df = df[~is_empty_activity].copy()
+
+        linhas_inicial = len(df) + len(df_empty)
         print(f"\n{'='*80}")
-        print(f"RASTREAMENTO DE LINHAS - Início do processamento: {linhas_inicial} linhas")
+        print(f"RASTREAMENTO DE LINHAS - Início do processamento: {linhas_inicial} linhas (incluindo {len(df_empty)} vazias ignoradas)")
         print(f"{'='*80}")
         print(f"Arquivo CSV de entrada carregado. Linhas iniciais: {linhas_inicial}")
     except Exception as e:
@@ -608,7 +633,14 @@ def processar_dados_aeronautica():
     # Atividades iniciadas por 'LA' também devem ser tratadas como voo,
     # mesmo quando a sigla exata não estiver cadastrada em tipos_voo.json.
     cond_activity_la = df['Activity'].astype(str).str.upper().str.startswith('LA', na=False)
-    cond_activity_voo = df['Activity_Norm'].isin(tipos_voo) | cond_activity_la
+    
+    latam_paid_flight_activities = set()
+    if arquivo_eh_latam:
+        latam_paid_flight_activities = _carregar_atividades_pagas_regras_voo_latam()
+        
+    cond_latam_json = df['Activity'].astype(str).str.strip().str.upper().isin(latam_paid_flight_activities) | df['Activity_Norm'].isin(latam_paid_flight_activities)
+
+    cond_activity_voo = df['Activity_Norm'].isin(tipos_voo) | cond_activity_la | cond_latam_json
 
 
     # --- 5. Cálculos e Criação de Novas Colunas ---
@@ -619,7 +651,7 @@ def processar_dados_aeronautica():
 
     # 6.2 – Tempo Apresentacao = Start – Checkin
     # Condição: Id_Leg_Norm in ['-I', '-IF'] AND Activity_Norm in tipos_voo
-    cond_id_leg_apres = df['Id_Leg_Norm'].isin(['-I', '-IF'])
+    cond_id_leg_apres = df['Id_Leg_Norm'].isin(['-I', '-IF']) | cond_latam_json
     cond_activity_apres = cond_activity_voo
     
     # Debug detalhado e aprimorado para Tempo Apresentacao
@@ -657,7 +689,7 @@ def processar_dados_aeronautica():
 
     # 6.3 – Tempo Corte = Checkout – End
     # Condição: Id_Leg_Norm in ['-IF', '-F'] AND Activity_Norm in tipos_voo
-    cond_id_leg_corte = df['Id_Leg_Norm'].isin(['-IF', '-F'])
+    cond_id_leg_corte = df['Id_Leg_Norm'].isin(['-IF', '-F']) | cond_latam_json
     cond_activity_corte = cond_activity_voo # Reutilizando tipos_voo + prefixo LA
     
     # Debug detalhado e aprimorado para Tempo Corte
@@ -709,7 +741,7 @@ def processar_dados_aeronautica():
     
     # NOVAS CONDIÇÕES COMBINADAS para Tempo Solo
     cond_solo_activity = cond_activity_voo
-    cond_solo_id_leg = ~df['Id_Leg_Norm'].isin(['-IF', '-F']) # NOT IN ['-IF', '-F']
+    cond_solo_id_leg = (~df['Id_Leg_Norm'].isin(['-IF', '-F'])) | cond_latam_json # NOT IN ['-IF', '-F']
     
     cond_solo_final = cond_solo_activity & cond_solo_id_leg
     
@@ -757,13 +789,13 @@ def processar_dados_aeronautica():
 
     # 6.5 – Tempo Jornada = (Checkout – Checkin) + 30 minutos
     # Condição: Id_Leg_Norm in ['-IF', '-F'] AND Activity_Norm NOT in folgas
-    cond_jornada = (df['Id_Leg_Norm'].isin(['-IF', '-F'])) & (~df['Activity_Norm'].isin(folgas))
+    cond_jornada = (df['Id_Leg_Norm'].isin(['-IF', '-F']) | cond_latam_json) & (~df['Activity_Norm'].isin(folgas))
     df['Tempo Jornada'] = np.where(cond_jornada, (df['Checkout'] - df['Checkin']), pd.NaT)
 
     # 6.6 – Tempo Repouso = Checkin da próxima linha – Checkout da linha atual
     # Condição: Id_Leg_Norm in ['-IF', '-F'] AND Activity_Norm NOT in folgas
     df['Next_Checkin_Repouso'] = df['Checkin'].shift(-1)
-    cond_repouso = (df['Id_Leg_Norm'].isin(['-IF', '-F'])) & (~df['Activity_Norm'].isin(folgas))
+    cond_repouso = (df['Id_Leg_Norm'].isin(['-IF', '-F']) | cond_latam_json) & (~df['Activity_Norm'].isin(folgas))
     df['Tempo Repouso'] = np.where(cond_repouso, df['Next_Checkin_Repouso'] - df['Checkout'], pd.NaT)
     df.drop(columns=['Next_Checkin_Repouso'], inplace=True)
 
@@ -881,6 +913,13 @@ def processar_dados_aeronautica():
     print(df[existing_display_cols].head(5).to_string())
     print("---------------------------------------------------------------")
 
+
+    # Reinserir linhas vazias antes de salvar
+    if not df_empty.empty:
+        df = pd.concat([df, df_empty], ignore_index=True)
+        df.sort_values('__original_index__', inplace=True)
+    if '__original_index__' in df.columns:
+        df.drop(columns=['__original_index__'], inplace=True)
 
     # --- 6. Formatação e Salvamento do Arquivo CSV de Saída ---
     linhas_final = len(df)

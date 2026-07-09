@@ -295,6 +295,11 @@ def processar_arquivo(arquivo_entrada: Path) -> Path:
         nova_checkout, _ = preencher_checkout_bfill_then_ffill(df_filled["Checkout"])
         df_filled["Checkout"] = nova_checkout
 
+    # Restaurar linhas que originalmente tinham Activity em branco (ex: folgas)
+    if "Activity" in df.columns:
+        mask_vazia = df["Activity"].isna()
+        df_filled.loc[mask_vazia, :] = df.loc[mask_vazia, :]
+
     # Regra específica LATAM:
     # quando Activity não iniciar com LA, Checkin deve ser igual a Start.
     df_filled = aplicar_regra_latam_checkin_start(df_filled, arquivo_entrada)

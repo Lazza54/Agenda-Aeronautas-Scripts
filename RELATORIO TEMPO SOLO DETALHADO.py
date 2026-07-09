@@ -470,12 +470,17 @@ class RelatorioTempoSoloDetalhado:
             # --- NOVO: Filtrar folgas ---
             import json
             base_dir = r'R:\SPECTRUM_SYSTEM\Aeronautas\Documentos_Comuns\Arquivos_Diversos'
-            candidatos_folgas = [
-                os.path.join(base_dir, "folgas_LATAM.json"),
-                os.path.join(base_dir, "folgas_regulamentares_LATAM.json"),
+            is_latam = 'LATAM' in str(self.arquivo_csv).upper()
+            candidatos_folgas = []
+            if is_latam:
+                candidatos_folgas.extend([
+                    os.path.join(base_dir, "folgas_LATAM.json"),
+                    os.path.join(base_dir, "folgas_regulamentares_LATAM.json")
+                ])
+            candidatos_folgas.extend([
                 os.path.join(base_dir, "folgas_regulamentares.json"),
                 os.path.join(base_dir, "folgas.json")
-            ]
+            ])
             
             folgas_set = set()
             for cand in candidatos_folgas:
@@ -483,6 +488,11 @@ class RelatorioTempoSoloDetalhado:
                     try:
                         with open(cand, 'r', encoding='utf-8') as f:
                             data = json.load(f)
+                        if isinstance(data, dict):
+                            for v in data.values():
+                                if isinstance(v, list):
+                                    data = v
+                                    break
                         if isinstance(data, list):
                             for item in data:
                                 if isinstance(item, str):

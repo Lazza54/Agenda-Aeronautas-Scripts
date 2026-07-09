@@ -47,6 +47,15 @@ def detectar_nome_aeronauta_para_saida(arquivos_pdf: list[str]) -> str | None:
     return None
 
 
+def detectar_mes_ano_escala(arquivos_pdf: list[str]) -> str:
+    """Procura por um padrão de datas (ex: 01052026_31052026) nos arquivos e retorna _MMAAAA."""
+    for arq in arquivos_pdf:
+        m = re.search(r"\d{2}(\d{2})(\d{4})_\d{8}", arq)
+        if m:
+            return f"_{m.group(1)}{m.group(2)}"
+    return ""
+
+
 def _modo_sem_popup() -> bool:
     return os.environ.get("AERO_NO_POPUP", "").strip().lower() in {"1", "true", "yes", "sim"}
 
@@ -1164,13 +1173,23 @@ def main():
     if not nome_aeronauta_detectado:
         nome_aeronauta_detectado = detectar_nome_aeronauta_para_saida(arquivos_pasta)
 
+    tipo_escala = ""
+    for arq in arquivos_pasta:
+        m = re.search(r"(?i)^escala_([pe])_", os.path.basename(arq))
+        if m:
+            tipo_escala = m.group(1).lower()
+            break
+            
+    prefixo_escala = f"{tipo_escala}_" if tipo_escala else ""
+
     # Configuração dinâmica de AUTOR e NOME_SAIDA
-    sufixo_data_processamento = f"_{datetime.now().strftime('%d%m%Y')}"
+    mes_ano = detectar_mes_ano_escala(arquivos_pasta)
+    sufixo_data_processamento = f"{mes_ano}_{datetime.now().strftime('%d%m%Y')}"
     if nome_aeronauta_detectado:
         AUTOR = nome_aeronauta_detectado.replace('_', ' ').strip().title()
-        NOME_SAIDA = f"BOOK_FINAL_{nome_aeronauta_detectado}{sufixo_data_processamento}.pdf"
+        NOME_SAIDA = f"BOOK_FINAL_{prefixo_escala}{nome_aeronauta_detectado}{sufixo_data_processamento}.pdf"
     else:
-        NOME_SAIDA = f"BOOK_FINAL_{AUTOR.replace(' ', '_')}{sufixo_data_processamento}.pdf"
+        NOME_SAIDA = f"BOOK_FINAL_{prefixo_escala}{AUTOR.replace(' ', '_')}{sufixo_data_processamento}.pdf"
 
     # Mapeamento dinâmico e ordenado das categorias de relatórios
     categorias_relatorios = [
