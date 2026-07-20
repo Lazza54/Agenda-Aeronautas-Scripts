@@ -1360,6 +1360,29 @@ class Jornada:
 
         return overlap_day or overlap_next_day
 
+    def get_night_date(self) -> Optional[datetime.date]:
+        """Retorna a data civil da madrugada (00:00 - 06:00) que esta jornada toca, se houver."""
+        if not self.hora_apresentacao or not self.hora_encerramento:
+            return None
+            
+        start_local = self.aeronauta_profile.get_local_datetime(self.hora_apresentacao)
+        end_local = self.aeronauta_profile.get_local_datetime(self.hora_encerramento)
+        
+        madrugada_start_day = start_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        madrugada_end_day = start_local.replace(hour=6, minute=0, second=0, microsecond=0)
+        
+        if max(start_local, madrugada_start_day) < min(end_local, madrugada_end_day):
+            return start_local.date()
+            
+        next_day = start_local + datetime.timedelta(days=1)
+        madrugada_start_next = next_day.replace(hour=0, minute=0, second=0, microsecond=0)
+        madrugada_end_next = next_day.replace(hour=6, minute=0, second=0, microsecond=0)
+        
+        if max(start_local, madrugada_start_next) < min(end_local, madrugada_end_next):
+            return next_day.date()
+            
+        return None
+
     def __repr__(self):
         return (f"<Jornada {self.data.strftime('%Y-%m-%d')} "
                 f"Apresentação: {self.aeronauta_profile.get_local_datetime(self.hora_apresentacao).strftime('%H:%M') if self.hora_apresentacao else 'N/A'} "
@@ -1711,69 +1734,154 @@ class ConsecutiveNightDutiesRule(Rule):
             current_total_168h = min(current_total_168h, self.cct_max_total_168h)
         return current_consecutive, current_total_168h
 
+    def _get_night_date(self, jornada: Jornada) -> Optional[datetime.date]:
+        if not jornada.includes_night_duty():
+            return None
+        
+        if not jornada.hora_apresentacao or not jornada.hora_encerramento:
+            return None
+            
+        start_local = jornada.aeronauta_profile.get_local_datetime(jornada.hora_apresentacao)
+        end_local = jornada.aeronauta_profile.get_local_datetime(jornada.hora_encerramento)
+        
+        madrugada_start_day = start_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        madrugada_end_day = start_local.replace(hour=6, minute=0, second=0, microsecond=0)
+        
+        if max(start_local, madrugada_start_day) < min(end_local, madrugada_end_day):
+            return start_local.date()
+            
+        next_day = start_local + datetime.timedelta(days=1)
+        madrugada_start_next = next_day.replace(hour=0, minute=0, second=0, microsecond=0)
+        madrugada_end_next = next_day.replace(hour=6, minute=0, second=0, microsecond=0)
+        
+        if max(start_local, madrugada_start_next) < min(end_local, madrugada_end_next):
+            return next_day.date()
+            
+        return None
+
     def check(self, schedule: Schedule, aeronauta_profile: AeronautaProfile) -> List[Violation]:
         violations = []
         max_consecutive, max_total_168h = self.get_applicable_limits(aeronauta_profile)
         
+        # Identifica o mês de predominância da escala para reportar violações apenas nele
+        entries_by_month = {}
+        for entry in schedule.all_entries:
+            key = (entry.data.year, entry.data.month)
+            entries_by_month[key] = entries_by_month.get(key, 0) + 1
+        principal_month = max(entries_by_month.items(), key=lambda x: x[1])[0] if entries_by_month else None
+
         # Filtra apenas as jornadas que NÃO são folga para o cálculo de madrugadas.
         # Jornadas são automaticamente construídas apenas com atividades de trabalho.
         # A detecção de madrugada dentro da jornada já usa os horários previstos.
         
         sorted_jornadas_trabalho = sorted(schedule.jornadas.values(), key=lambda j: j.data)
         
-        # Verifica madrugadas consecutivas
+        # Faz a fusão de jornadas que têm um intervalo de repouso < 12 horas
+        merged_jornadas_trabalho = []
+        for j in sorted_jornadas_trabalho:
+            if not merged_jornadas_trabalho:
+                merged_jornadas_trabalho.append(j)
+            else:
+                last_j = merged_jornadas_trabalho[-1]
+                gap_hours = 999.0
+                if j.hora_apresentacao and last_j.hora_encerramento:
+                    gap_hours = (j.hora_apresentacao - last_j.hora_encerramento).total_seconds() / 3600.0
+                
+                # Se o gap for menor que 12h, é o mesmo bloco de trabalho (não houve pernoite)
+                if gap_hours < 12.0:
+                    # Fundir: criamos um "novo" objeto Jornada
+                    combined = Jornada(aeronauta_profile, last_j.data) # Mantém a data de início
+                    # Forçamos a adição das atividades de ambas as jornadas
+                    for a in last_j.atividades + j.atividades:
+                        combined.add_atividade(a)
+                    merged_jornadas_trabalho[-1] = combined
+                else:
+                    merged_jornadas_trabalho.append(j)
+        
+        # Verifica madrugadas consecutivas usando a data da noite efetiva (night_date)
         consecutive_night_duties_count = 0
-        last_jornada_date = None
+        last_night_date = None
 
-        for jornada in sorted_jornadas_trabalho:
-            # Garante que a jornada atual é consecutiva à anterior (se houver)
-            # ou reseta a contagem se houver um gap ou se for o primeiro
-            if last_jornada_date is None or (jornada.data - last_jornada_date).days > 1:
-                consecutive_night_duties_count = 0
+        for j_idx, jornada in enumerate(merged_jornadas_trabalho):
+            night_date = self._get_night_date(jornada)
+            
+            if night_date is not None:
+                if last_night_date is None or (night_date - last_night_date).days == 1:
+                    # É a primeira madrugada ou imediatamente consecutiva à anterior
+                    consecutive_night_duties_count += 1
+                elif (night_date - last_night_date).days == 0:
+                    # Mesma noite, não incrementa (apenas se não fundiu)
+                    pass
+                else:
+                    # Quebrou a sequência
+                    consecutive_night_duties_count = 1
+                    
+                last_night_date = night_date
 
-            if jornada.includes_night_duty():
-                consecutive_night_duties_count += 1
                 if consecutive_night_duties_count > max_consecutive:
-                    # Coleta os dados das atividades da jornada para o relatório
-                    relevant_data = [entry.get_report_data() for entry in jornada.atividades]
-                    violations.append(
-                        Violation(
-                            rule_name=self.name,
-                            description=f"Excedido o limite de madrugadas consecutivas.",
-                            reference=f"{self.base_reference} / CCT {aeronauta_profile.cct_aplicavel}",
-                            severity="ALTA",
-                            details=f"Jornada de {jornada.data.strftime('%d/%m/%Y')} é a {consecutive_night_duties_count}ª madrugada consecutiva de trabalho. Limite: {max_consecutive}.",
-                            relevant_entries_data=relevant_data
-                        )
-                    )
+                    is_allowed_by_cct = False
+                    if consecutive_night_duties_count == 3:
+                        # CCT Parágrafo 1: allowed if tripulante extra in return flight
+                        if jornada.atividades:
+                            last_activity = jornada.atividades[-1]
+                            tipo_ativ = str(last_activity.tipo_atividade).upper()
+                            if "EXTRA" in tipo_ativ or "DH" in tipo_ativ:
+                                is_allowed_by_cct = True
+                                
+                    if not is_allowed_by_cct:
+                        # (Apenas reporta se caiu no mês predominante)
+                        if principal_month and (jornada.data.year, jornada.data.month) != principal_month:
+                            pass
+                        else:
+                            violations.append(
+                                Violation(
+                                    rule_name=self.name,
+                                    severity="ALTA",
+                                    details=f"Jornada de {jornada.data.strftime('%d/%m/%Y')} é a {consecutive_night_duties_count}ª madrugada consecutiva de trabalho. Limite: {max_consecutive}.",
+                                    relevant_entries_data=relevant_data
+                                )
+                            )
             else:
                 consecutive_night_duties_count = 0 # Reseta a contagem se não for madrugada
             
             last_jornada_date = jornada.data # Atualiza a última data para o próximo check de consecução
 
             # Verifica limite de madrugadas em 168 horas (7 dias)
-            # Para cada jornada, olha para trás 168h e conta as madrugadas de TRABALHO
+            # CCT Parágrafo 2: Reseta contagem se houver um gap de 48h
             end_of_window = jornada.data
             start_of_window = end_of_window - datetime.timedelta(days=7)
             
             madrugadas_in_window = 0
-            for prev_jornada in sorted_jornadas_trabalho:
-                if start_of_window <= prev_jornada.data <= end_of_window and prev_jornada.includes_night_duty():
+            for i in range(j_idx, -1, -1):
+                prev_jornada = merged_jornadas_trabalho[i]
+                if prev_jornada.data < start_of_window:
+                    break
+                
+                if prev_jornada.includes_night_duty():
                     madrugadas_in_window += 1
+                    
+                # Checa se antes dessa jornada houve um gap >= 48h
+                if i > 0:
+                    pj_before = merged_jornadas_trabalho[i-1]
+                    if prev_jornada.hora_apresentacao and pj_before.hora_encerramento:
+                        gap_hours = (prev_jornada.hora_apresentacao - pj_before.hora_encerramento).total_seconds() / 3600.0
+                        if gap_hours >= 48.0:
+                            break # O gap de 48h ocorreu, as jornadas anteriores não contam para o limite de 168h
             
             if madrugadas_in_window > max_total_168h:
-                # Coleta os dados das atividades da jornada para o relatório
-                relevant_data = [entry.get_report_data() for entry in jornada.atividades]
-                violations.append(
-                    Violation(
-                        rule_name=self.name,
-                        description=f"Excedido o limite de madrugadas no período de 168 horas.",
-                        reference=f"{self.base_reference} / CCT {aeronauta_profile.cct_aplicavel}",
-                        severity="ALTA",
-                        details=f"Na semana de {start_of_window.strftime('%d/%m/%Y')} a {end_of_window.strftime('%d/%m/%Y')}, foram {madrugadas_in_window} madrugadas de trabalho. Limite: {max_total_168h}.",
-                        relevant_entries_data=relevant_data
+                is_predominant_month = principal_month is None or (jornada.data.year, jornada.data.month) == principal_month
+                if is_predominant_month:
+                    relevant_data = [entry.get_report_data() for entry in jornada.atividades]
+                    violations.append(
+                        Violation(
+                            rule_name=self.name,
+                            description=f"Excedido o limite de madrugadas no período de 168 horas.",
+                            reference=f"{self.base_reference} / CCT {aeronauta_profile.cct_aplicavel}",
+                            severity="ALTA",
+                            details=f"Na janela que se encerra em {end_of_window.strftime('%d/%m/%Y')}, foram {madrugadas_in_window} madrugadas de trabalho num período de 168h. Limite: {max_total_168h}.",
+                            relevant_entries_data=relevant_data
+                        )
                     )
-                )
 
         return violations
 
@@ -1875,20 +1983,38 @@ class MonthlyFolgasRule(Rule):
         )
 
     @staticmethod
-    def _folga_dates(schedule: Schedule, profile: AeronautaProfile) -> Set[datetime.date]:
-        folga_dates: Set[datetime.date] = set()
-        for e in schedule.all_entries:
-            if not e.is_folga(profile.folgas_set):
-                continue
-            start_local, end_local = e.get_local_interval(profile)
-            start_date = start_local.date()
-            end_date = end_local.date()
-            if end_date < start_date:
-                end_date = start_date
-            current = start_date
-            while current <= end_date:
-                folga_dates.add(current)
-                current += datetime.timedelta(days=1)
+    def _folga_dates(schedule: Schedule, profile: AeronautaProfile) -> List[datetime.date]:
+        folga_dates: List[datetime.date] = []
+        # Filtra apenas entradas de folga
+        folga_entries = [e for e in schedule.all_entries if e.is_folga(profile.folgas_set)]
+        if not folga_entries:
+            return folga_dates
+        
+        # Ordena pelas datas/horas de início local
+        folga_entries.sort(key=lambda e: e.get_local_interval(profile)[0])
+        
+        # Agrupa folgas contíguas
+        merged_blocks = []
+        for e in folga_entries:
+            start, end = e.get_local_interval(profile)
+            if not merged_blocks:
+                merged_blocks.append((start, end))
+            else:
+                last_start, last_end = merged_blocks[-1]
+                if start <= last_end:
+                    merged_blocks[-1] = (last_start, max(last_end, end))
+                else:
+                    merged_blocks.append((start, end))
+                    
+        # Converte a duração de cada bloco ininterrupto em múltiplos de 24h
+        for start, end in merged_blocks:
+            total_seconds = (end - start).total_seconds()
+            num_folgas = int(total_seconds // 86400) # 86400s = 24h
+            for i in range(num_folgas):
+                # Para cada folga, extrai a data civil em que este período de 24h se iniciou
+                chunk_start = start + datetime.timedelta(days=i)
+                folga_dates.append(chunk_start.date())
+                
         return folga_dates
 
     @staticmethod
@@ -2001,6 +2127,17 @@ class WeekendConsecutiveFolgasRule(Rule):
         folga_set = set(folga_dates)
         months = sorted({(d.year, d.month) for d in folga_dates})
 
+        def _is_date_fully_covered(d: datetime.date) -> bool:
+            target_start = datetime.datetime.combine(d, datetime.time(0, 0))
+            target_end = target_start + datetime.timedelta(days=1)
+            for e in schedule.all_entries:
+                if not e.is_folga(aeronauta_profile.folgas_set):
+                    continue
+                start_local, end_local = e.get_local_interval(aeronauta_profile)
+                if start_local.replace(tzinfo=None) <= target_start and end_local.replace(tzinfo=None) >= target_end:
+                    return True
+            return False
+
         for year, month in months:
             weekend_dates: Set[datetime.date] = set()
             count_pairs = 0
@@ -2010,9 +2147,10 @@ class WeekendConsecutiveFolgasRule(Rule):
                 if d.weekday() == 5:  # sábado
                     sunday = d + datetime.timedelta(days=1)
                     if sunday in folga_set and sunday.month == month and sunday.weekday() == 6:
-                        count_pairs += 1
-                        weekend_dates.add(d)
-                        weekend_dates.add(sunday)
+                        if _is_date_fully_covered(d) and _is_date_fully_covered(sunday):
+                            count_pairs += 1
+                            weekend_dates.add(d)
+                            weekend_dates.add(sunday)
 
             found_weekend_folgas = len(weekend_dates)
             required_weekend_folgas = int(min_weekends)
@@ -2176,12 +2314,12 @@ class SixthPeriodRule(Rule):
 
 
 class CivilDayFolgaRule(Rule):
-    """Regra: folgas definidas em dias devem cobrir dia civil completo (24h)."""
+    """Regra: folgas devem possuir no mínimo 24h ininterruptas."""
     def __init__(self):
         super().__init__(
-            name="Folga em Dia Civil Completo",
-            description="Verifica se cada folga definida em dias cobre ao menos um dia civil completo.",
-            base_reference="RBAC 117 A117.25 e regra de ouro interna (dia civil = 24h)",
+            name="Folga Mínima de 24h",
+            description="Verifica se cada folga possui no mínimo 24 horas ininterruptas.",
+            base_reference="Lei 13.475/17 Art. 47 (24h ininterruptas)",
             priority=71,
         )
 
@@ -2192,11 +2330,13 @@ class CivilDayFolgaRule(Rule):
         for idx, entry in enumerate(sorted_entries):
             if not entry.is_folga(aeronauta_profile.folgas_set):
                 continue
-            if entry.is_full_civil_day(aeronauta_profile):
-                continue
 
             start_local, end_local = entry.get_local_interval(aeronauta_profile)
             duration_minutes = entry.duration_minutes(aeronauta_profile)
+            
+            if duration_minutes >= 1440:
+                continue
+
             next_programming = None
             for next_entry in sorted_entries[idx + 1:]:
                 if next_entry.is_folga(aeronauta_profile.folgas_set):
@@ -2210,25 +2350,25 @@ class CivilDayFolgaRule(Rule):
                 next_start_local, _ = next_programming.get_local_interval(aeronauta_profile)
                 slack_minutes = int((next_start_local - end_local).total_seconds() / 60)
                 total_until_next_minutes = int((next_start_local - start_local).total_seconds() / 60)
-                if slack_minutes > 0 and total_until_next_minutes >= MINUTES_PER_CIVIL_DAY:
+                if slack_minutes > 0 and total_until_next_minutes >= 1440:
                     observacao_lastro = (
                         " OBS: O TOTAL DE HORAS DA FOLGA ESTÁ EM DESACORDO COM A LEGISLAÇÃO, "
                         "MAS COMO EXISTE LASTRO ATÉ O INÍCIO DA PRÓXIMA PROGRAMAÇÃO O TOTAL DE HORAS "
-                        "É SUFICIENTE PARA O MÍNIMO TOTAL DE HORAS PREVISTAS."
+                        "É SUFICIENTE PARA AS 24H PREVISTAS."
                     )
                     relevant_entries.append(next_programming.get_report_data())
 
             violations.append(
                 Violation(
                     rule_name=self.name,
-                    description=f"Folga '{entry.tipo_atividade}' inferior a um dia civil completo.",
+                    description=f"Folga '{entry.tipo_atividade}' inferior a 24 horas.",
                     reference=self.base_reference,
                     severity="ALTA",
                     details=(
                         f"Início local: {start_local.strftime('%d/%m/%Y %H:%M')}. "
                         f"Fim local: {end_local.strftime('%d/%m/%Y %H:%M')}. "
                         f"Duração apurada: {duration_minutes // 60:02d}:{duration_minutes % 60:02d}. "
-                        f"Para contar como dia de folga, a cobertura mínima é 24:00 em dia civil fechado (00:00->00:00)."
+                        f"A folga legal deve possuir no mínimo 24:00 horas ininterruptas."
                         f"{observacao_lastro}"
                     ),
                     relevant_entries_data=relevant_entries,
@@ -2528,8 +2668,13 @@ class ReportGenerator:
             })
 
         # 3) Madrugadas consecutivas
-        night_jornadas = sorted([j for j in month_jornadas if j.includes_night_duty()], key=lambda j: j.data)
-        night_dates = [j.data for j in night_jornadas]
+        raw_night_dates = []
+        for j in month_jornadas:
+            nd = j.get_night_date()
+            if nd:
+                raw_night_dates.append(nd)
+                
+        night_dates = sorted(list(set(raw_night_dates)))
         night_runs: List[Tuple[datetime.date, datetime.date, int]] = []
         if night_dates:
             rs = night_dates[0]
@@ -3207,40 +3352,6 @@ class ReportGenerator:
             else:
                 f.write("- Nenhuma jornada de trabalho encontrada na escala.\n\n")
 
-            f.write("# Cálculos objetivos por dia (todas as programações)\n\n")
-            loader = get_limits_loader()
-            sorted_jornadas = sorted(schedule.jornadas.values(), key=lambda j: j.data)
-            next_jornada_by_date = {
-                j.data: (sorted_jornadas[idx + 1] if idx + 1 < len(sorted_jornadas) else None)
-                for idx, j in enumerate(sorted_jornadas)
-            }
-
-            entries_by_date: Dict[datetime.date, List[ScheduleEntry]] = {}
-            for e in schedule.all_entries:
-                entries_by_date.setdefault(e.data, []).append(e)
-            all_entries_sorted = sorted(schedule.all_entries, key=lambda e: e.get_start_datetime(aeronauta_profile))
-
-            all_dates = sorted(entries_by_date.keys())
-            for idx, day_date in enumerate(all_dates):
-                _print_progress(idx + 1, len(all_dates), "Gerando dias")
-                jornada = schedule.jornadas.get(day_date)
-                if jornada is not None:
-                    self._write_jornada_detail(
-                        f,
-                        aeronauta_profile,
-                        jornada,
-                        next_jornada_by_date.get(day_date),
-                        loader,
-                    )
-                else:
-                    self._write_non_work_day_detail(
-                        f,
-                        aeronauta_profile,
-                        day_date,
-                        entries_by_date.get(day_date, []),
-                        all_entries_sorted,
-                    )
-
             f.write("\n==============================================================================\n")
             f.write("# RESULTADO DA AUDITORIA\n")
             f.write("==============================================================================\n\n")
@@ -3293,6 +3404,42 @@ class ReportGenerator:
                         _print_progress(processed_violations, total_violations, "Gerando relatório")
 
             self._write_monthly_summary(f, aeronauta_profile, schedule)
+
+            f.write("\n==============================================================================\n")
+            f.write("==============================================================================\n\n")
+            f.write("# Cálculos objetivos por dia (todas as programações)\n\n")
+            loader = get_limits_loader()
+            sorted_jornadas = sorted(schedule.jornadas.values(), key=lambda j: j.data)
+            next_jornada_by_date = {
+                j.data: (sorted_jornadas[idx + 1] if idx + 1 < len(sorted_jornadas) else None)
+                for idx, j in enumerate(sorted_jornadas)
+            }
+
+            entries_by_date: Dict[datetime.date, List[ScheduleEntry]] = {}
+            for e in schedule.all_entries:
+                entries_by_date.setdefault(e.data, []).append(e)
+            all_entries_sorted = sorted(schedule.all_entries, key=lambda e: e.get_start_datetime(aeronauta_profile))
+
+            all_dates = sorted(entries_by_date.keys())
+            for idx, day_date in enumerate(all_dates):
+                _print_progress(idx + 1, len(all_dates), "Gerando dias")
+                jornada = schedule.jornadas.get(day_date)
+                if jornada is not None:
+                    self._write_jornada_detail(
+                        f,
+                        aeronauta_profile,
+                        jornada,
+                        next_jornada_by_date.get(day_date),
+                        loader,
+                    )
+                else:
+                    self._write_non_work_day_detail(
+                        f,
+                        aeronauta_profile,
+                        day_date,
+                        entries_by_date.get(day_date, []),
+                        all_entries_sorted,
+                    )
 
             f.write("# Informações adicionais\n")
             f.write("- Este relatório é baseado nas informações fornecidas pelo aeronauta e na legislação vigente.\n")
