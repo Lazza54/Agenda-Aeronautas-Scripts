@@ -2345,11 +2345,11 @@ class MonthlyFolgasRule(Rule):
 
 
 class WeekendConsecutiveFolgasRule(Rule):
-    """Regra: pelo menos 2 folgas do mês devem formar sábado+domingo consecutivos."""
+    """Regra: pelo menos 2 folgas do mês devem formar sábado + domingo consecutivos. sábado e domingo são referências a dias civis, portanto iniciam as 00:00 e terminam também as 00:00, assim o repouso que antecede essas folgas, deve iniciar as 12:00 Horas."""
     def __init__(self):
         super().__init__(
             name="Folgas de Fim de Semana",
-            description="Verifica quantidade mínima de folgas contendo sábado e domingo consecutivos.",
+            description="Verifica quantidade mínima de folgas contendo sábado e domingo consecutivos. Sábado e domingo são referências a dias civis, portanto iniciam as 00:00 e terminam também as 00:00, assim o repouso que antecede essas folgas, deve iniciar as 12:00 Horas.",
             base_reference="RBAC 117 A117.25(f)",
             priority=73,
         )
@@ -2409,7 +2409,8 @@ class WeekendConsecutiveFolgasRule(Rule):
                         severity="MEDIA",
                         details=(
                             f"Encontradas: {found_weekend_folgas} folga(s) de final de semana "
-                            f"({count_pairs} par(es) sábado+domingo). Mínimo exigido: {required_weekend_folgas} folga(s) de final de semana."
+                            f"({count_pairs} par(es) sábado + domingo). Mínimo exigido: {required_weekend_folgas} folga(s) de final de semana.\n"
+                            f"Sábado e domingo são referências a dias civis, portanto iniciam as 00:00 e terminam também as 00:00, assim o repouso que antecede essas folgas, deve iniciar as 12:00 Horas."
                         ),
                         relevant_entries_data=[e.get_report_data() for e in schedule.all_entries if e.data.year == year and e.data.month == month]
                     )
@@ -3028,7 +3029,7 @@ class ReportGenerator:
             })
             cursor += datetime.timedelta(days=7)
 
-        # Finais de semana (sábado+domingo consecutivos)
+        # Finais de semana (sábado + domingo consecutivos)
         weekend_pairs: List[datetime.date] = []
         for d in folga_dates:
             if d.weekday() == 5:  # sábado
@@ -3159,7 +3160,7 @@ class ReportGenerator:
             pares_txt = ", ".join(d.strftime('%d/%m') for d in weekend_pairs)
             f.write(
                 f"  • {len(weekend_pairs) * 2} folga(s) de fim de semana "
-                f"({len(weekend_pairs)} par(es) sábado+domingo): {pares_txt}.\n"
+                f"({len(weekend_pairs)} par(es) sábado + domingo): {pares_txt}.\n"
             )
         else:
             f.write("  • 0 folgas de fim de semana no mês auditado.\n")
