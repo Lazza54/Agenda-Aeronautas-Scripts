@@ -36,6 +36,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from config_caminhos import BASE_COMMON_FILES_PATH
 
 # ReportLab imports
 try:
@@ -101,7 +102,7 @@ class RelatorioDiarias:
 
     def _carregar_configs_folga(self):
         """Carrega a configuração de folgas/licenças correspondente à empresa."""
-        dir_diversos = r"R:\SPECTRUM_SYSTEM\Aeronautas\Documentos_Comuns\Arquivos_Diversos"
+        dir_diversos = str(BASE_COMMON_FILES_PATH)
         
         # Se R: não existir, tenta o diretório atual do script como fallback
         if not os.path.exists(dir_diversos):

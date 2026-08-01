@@ -13,6 +13,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from SUPABASE_CONEXAO_DEV import obter_config, criar_cliente
+from config_caminhos import BASE_AERONAUTAS_PATH
 
 # Garante que a saída do console utilize UTF-8 para suportar caracteres especiais (como emojis de check e erro)
 if hasattr(sys.stdout, 'reconfigure'):
@@ -111,7 +112,7 @@ def process_job(supabase, job):
 
     try:
         # 2. Cria as pastas locais
-        base_local_dir = "R:/SPECTRUM_SYSTEM/Aeronautas"
+        base_local_dir = str(BASE_AERONAUTAS_PATH)
         
         # Sanitização simples para caminhos válidos no Windows
         def clean_path_segment(s: str) -> str:

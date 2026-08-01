@@ -21,6 +21,7 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import sys
+from config_caminhos import BASE_COMMON_FILES_PATH
 
 # Importar módulo Supabase
 try:
@@ -469,7 +470,7 @@ class RelatorioTempoSoloDetalhado:
             
             # --- NOVO: Filtrar folgas ---
             import json
-            base_dir = r'R:\SPECTRUM_SYSTEM\Aeronautas\Documentos_Comuns\Arquivos_Diversos'
+            base_dir = str(BASE_COMMON_FILES_PATH)
             is_latam = 'LATAM' in str(self.arquivo_csv).upper()
             candidatos_folgas = []
             if is_latam:

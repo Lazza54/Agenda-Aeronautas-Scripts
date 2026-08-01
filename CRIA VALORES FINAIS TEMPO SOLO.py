@@ -6,6 +6,7 @@ from tkinter import filedialog, messagebox
 import numpy as np
 from datetime import datetime, timedelta, time, date
 import re
+from config_caminhos import BASE_COMMON_FILES_PATH
 
 MODO_AUTOMATICO = bool(os.environ.get("AERO_ESCALA_CSV")) or os.environ.get("AERO_NO_POPUP") == "1"
 if MODO_AUTOMATICO:
@@ -21,7 +22,7 @@ if MODO_AUTOMATICO:
 # ATENÇÃO: VERIFIQUE E AJUSTE ESTE CAMINHO CONFORME SEU AMBIENTE
 # Este é o diretório onde os arquivos JSON e Excel de apoio devem estar localizados.
 # Se este caminho estiver incorreto, o script não encontrará os arquivos de apoio.
-BASE_COMMON_FILES_PATH = r'R:\SPECTRUM_SYSTEM\Aeronautas\Documentos_Comuns\Arquivos_Diversos'
+BASE_COMMON_FILES_PATH = str(BASE_COMMON_FILES_PATH)
 
 def _arquivo_entrada_eh_latam() -> bool:
     candidatos = [

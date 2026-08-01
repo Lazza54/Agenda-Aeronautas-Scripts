@@ -7,6 +7,7 @@ import unicodedata
 from datetime import datetime, timedelta, date
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from config_caminhos import BASE_COMMON_FILES_PATH
 
 MODO_AUTOMATICO = bool(os.environ.get("AERO_ESCALA_CSV")) or os.environ.get("AERO_NO_POPUP") == "1"
 if MODO_AUTOMATICO:
@@ -20,7 +21,7 @@ if MODO_AUTOMATICO:
 # --- Configurações Globais ---
 # ATENÇÃO: Este caminho deve ser o diretório base onde os arquivos auxiliares (JSON, XLSX) estão.
 # Substitua pelo caminho correto no seu sistema.
-BASE_COMMON_FILES_PATH = r"R:\SPECTRUM_SYSTEM\Aeronautas\Documentos_Comuns\Arquivos_Diversos"
+BASE_COMMON_FILES_PATH = str(BASE_COMMON_FILES_PATH)
 ATIVIDADES_ESCALA_LATAM_FILE = "AtividadesEscalaLATAM.json"
 
 def _arquivo_entrada_eh_latam() -> bool:

@@ -30,18 +30,18 @@ def smart_open(filename=None, mode='w'):
         yield sys.stdout
 
 # --- Caminho base dos JSONs de regras ---
-REGRAS_JSON_PATH = pathlib.Path("R:/SPECTRUM_SYSTEM/Aeronautas/Documentos_Comuns/Documentacao_Oficial/regras_json")
-METADATA_EOS_PATH = pathlib.Path("R:/SPECTRUM_SYSTEM/Aeronautas/Documentos_Comuns/Legislacao_Aeronautica/metadata_eos.json")
-LIMITS_MATRIX_PATH = pathlib.Path("R:/SPECTRUM_SYSTEM/Aeronautas/Documentos_Comuns/Arquivos_Diversos/limits_matrix_cells_from_rows.json")
-LIMITS_MATRIX_B3_PATH = pathlib.Path("R:/SPECTRUM_SYSTEM/Aeronautas/Documentos_Comuns/Arquivos_Diversos/limits_matrix_b3_comissarios.json")
-LIMITS_E2_PATH = pathlib.Path("R:/SPECTRUM_SYSTEM/Aeronautas/Documentos_Comuns/Arquivos_Diversos/limits_e2_tripulacao_simples.json")
-LIMITS_A3_PATH = pathlib.Path("R:/SPECTRUM_SYSTEM/Aeronautas/Documentos_Comuns/Arquivos_Diversos/limits_a3_mensal_anual.json")
-TABELA_B2_PATH = pathlib.Path("R:/SPECTRUM_SYSTEM/Aeronautas/Documentos_Comuns/Arquivos_Diversos/Tabela B.2.json")
-TABELA_B3_PATH = pathlib.Path("R:/SPECTRUM_SYSTEM/Aeronautas/Documentos_Comuns/Arquivos_Diversos/Tabela B.3.json")
-TABELA_A4_PATH = pathlib.Path("R:/SPECTRUM_SYSTEM/Aeronautas/Documentos_Comuns/Arquivos_Diversos/Tabela A.4.json")
-TABELA_A5_PATH = pathlib.Path("R:/SPECTRUM_SYSTEM/Aeronautas/Documentos_Comuns/Arquivos_Diversos/Tabela A.5.json")
+REGRAS_JSON_PATH = pathlib.Path(BASE_OFFICIAL_DOCS_PATH / "regras_json")
+METADATA_EOS_PATH = pathlib.Path(BASE_LEGISLACAO_PATH / "metadata_eos.json")
+LIMITS_MATRIX_PATH = pathlib.Path(BASE_COMMON_FILES_PATH / "limits_matrix_cells_from_rows.json")
+LIMITS_MATRIX_B3_PATH = pathlib.Path(BASE_COMMON_FILES_PATH / "limits_matrix_b3_comissarios.json")
+LIMITS_E2_PATH = pathlib.Path(BASE_COMMON_FILES_PATH / "limits_e2_tripulacao_simples.json")
+LIMITS_A3_PATH = pathlib.Path(BASE_COMMON_FILES_PATH / "limits_a3_mensal_anual.json")
+TABELA_B2_PATH = pathlib.Path(BASE_COMMON_FILES_PATH / "Tabela B.2.json")
+TABELA_B3_PATH = pathlib.Path(BASE_COMMON_FILES_PATH / "Tabela B.3.json")
+TABELA_A4_PATH = pathlib.Path(BASE_COMMON_FILES_PATH / "Tabela A.4.json")
+TABELA_A5_PATH = pathlib.Path(BASE_COMMON_FILES_PATH / "Tabela A.5.json")
 LOCAL_TEXT_LIMITS_PATH = pathlib.Path(__file__).with_name("cct_text_limits_local.json")
-ATIVIDADES_ESCALA_LATAM_PATH = pathlib.Path("R:/SPECTRUM_SYSTEM/Aeronautas/Documentos_Comuns/Arquivos_Diversos/AtividadesEscalaLATAM.json")
+ATIVIDADES_ESCALA_LATAM_PATH = pathlib.Path(BASE_COMMON_FILES_PATH / "AtividadesEscalaLATAM.json")
 
 
 def _parse_hhmm_to_minutes(s: str) -> int:
@@ -3738,6 +3738,7 @@ class AeronautaProfile:
 import sys
 import os
 import csv
+from config_caminhos import BASE_COMMON_FILES_PATH, BASE_OFFICIAL_DOCS_PATH, BASE_LEGISLACAO_PATH
 
 def main():
     # Tratamento do argumento de linha de comando ou entrada interativa

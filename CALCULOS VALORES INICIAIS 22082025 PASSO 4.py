@@ -8,6 +8,7 @@ import datetime
 from datetime import timedelta
 import re
 import unicodedata
+from config_caminhos import BASE_COMMON_FILES_PATH
 
 MODO_AUTOMATICO = bool(os.environ.get("AERO_ESCALA_CSV")) or os.environ.get("AERO_NO_POPUP") == "1"
 if MODO_AUTOMATICO:
@@ -23,7 +24,7 @@ if MODO_AUTOMATICO:
 # ATENÇÃO: VERIFIQUE E AJUSTE ESTE CAMINHO CONFORME SEU AMBIENTE
 # Este é o diretório onde os arquivos JSON e Excel de apoio devem estar localizados.
 # Se este caminho estiver incorreto, o script não encontrará os arquivos de apoio.
-BASE_COMMON_FILES_PATH = r'R:\SPECTRUM_SYSTEM\Aeronautas\Documentos_Comuns\Arquivos_Diversos'
+BASE_COMMON_FILES_PATH = str(BASE_COMMON_FILES_PATH)
 ATIVIDADES_ESCALA_LATAM_FILE = 'AtividadesEscalaLATAM.json'
 
 KEYWORDS_CODIGO_AMS_TREINAMENTO = [

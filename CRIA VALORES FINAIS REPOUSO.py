@@ -21,7 +21,7 @@ if MODO_AUTOMATICO:
 # ATENÇÃO: VERIFIQUE E AJUSTE ESTE CAMINHO CONFORME SEU AMBIENTE
 # Este é o diretório onde os arquivos JSON e Excel de apoio devem estar localizados.
 # Se este caminho estiver incorreto, o script não encontrará os arquivos de apoio.
-BASE_COMMON_FILES_PATH = r'R:\SPECTRUM_SYSTEM\Aeronautas\Documentos_Comuns\Arquivos_Diversos'
+BASE_COMMON_FILES_PATH = str(BASE_COMMON_FILES_PATH)
 
 def _arquivo_entrada_eh_latam() -> bool:
     candidatos = [
@@ -50,6 +50,7 @@ def _resolver_json_apoio(file_name: str) -> list[str]:
     return existentes if existentes else [candidatos[-1]]
 
 import unicodedata
+from config_caminhos import BASE_COMMON_FILES_PATH
 def _normalizar_texto(valor) -> str:
     if valor is None: return ''
     txt = str(valor).strip().upper()
